@@ -1,0 +1,8 @@
+*.vscode/*
+*.env
+*.pyc
+
+# Generated output — logs, plots, backtest artifacts
+output/*
+!output/.gitkeep
+__pycache__/
