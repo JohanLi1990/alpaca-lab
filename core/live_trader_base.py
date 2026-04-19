@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, time, timezone
+
 
 log = logging.getLogger(__name__)
 
@@ -13,10 +13,6 @@ from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 
 load_dotenv()
-
-# NYSE core session (ET converted to UTC offset naively for checking)
-_NYSE_OPEN = time(14, 30)   # 09:30 ET = 14:30 UTC
-_NYSE_CLOSE = time(21, 0)   # 16:00 ET = 21:00 UTC
 
 
 class AlpacaLiveTraderBase:
@@ -87,17 +83,11 @@ class AlpacaLiveTraderBase:
     # ------------------------------------------------------------------
 
     def _warn_if_outside_hours(self) -> None:
-        now_utc = datetime.now(timezone.utc)
-        if now_utc.weekday() >= 5:  # Saturday=5, Sunday=6
+        clock = self.client.get_clock()
+        if not getattr(clock, "is_open", False):
+            next_open = getattr(clock, "next_open", None)
+            next_open_msg = str(next_open) if next_open is not None else "unknown"
             raise RuntimeError(
-                f"Refusing to submit orders on a weekend "
-                f"(UTC: {now_utc.strftime('%A %Y-%m-%d %H:%M')}). "
-                "Alpaca DAY orders submitted on weekends are silently rejected."
-            )
-        now_time = now_utc.time()
-        if not (_NYSE_OPEN <= now_time <= _NYSE_CLOSE):
-            log.warning(
-                "Current time %s UTC is outside NYSE core hours (14:30–21:00 UTC). "
-                "Orders will be queued and fill at market open.",
-                now_time.strftime("%H:%M"),
+                "Refusing to submit orders outside regular market hours. "
+                f"Alpaca clock reports market closed; next open: {next_open_msg}."
             )

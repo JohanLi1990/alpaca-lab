@@ -50,7 +50,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Run even if today is not Friday UTC.",
+        help="Run even if today is not Monday UTC.",
     )
     return parser.parse_args()
 

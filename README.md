@@ -38,10 +38,10 @@ Optional capital cap:
 python scripts/weekly_live_rebalance.py --capital-cap 30000
 ```
 
-Example crontab entry (every Monday pre-market, 13:00 UTC):
+Example crontab entry (every Monday regular session, 14:35 UTC):
 
 ```cron
-0 13 * * 1 cd /home/chenyang/Git/alpaca-lab && /usr/bin/python3 scripts/weekly_live_rebalance.py --capital-cap 30000 >> output/live_weekly.log 2>&1
+35 14 * * 1 cd /home/chenyang/Git/alpaca-lab && /home/chenyang/miniconda3/envs/strategy-lab/bin/python scripts/weekly_live_rebalance.py --capital-cap 30000 >> output/live_rebalance.log 2>&1
 ```
 
-Pick a time that matches your desired session timing.
+This timing is a conservative regular-hours choice across DST changes and avoids pre-market execution.
