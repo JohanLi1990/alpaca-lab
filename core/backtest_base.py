@@ -136,11 +136,11 @@ class AlpacaBacktestBase:
     # ------------------------------------------------------------------
 
     def on_bar(self, bar: int) -> None:  # pragma: no cover
-        """Override in subclass: called on each bar (Friday only for rebalance)."""
+        """Override in subclass: called on each bar (Monday only for rebalance)."""
         raise NotImplementedError
 
-    def run_backtest(self) -> None:
-        """Main event loop. Iterates over all bars, calls on_bar on Fridays."""
+    def run_backtest(self) -> pd.Series | None:
+        """Main event loop. Iterates over all bars, calls on_bar on Mondays."""
         self.cash = self.initial_amount
         self.units_held = {}
         self.trades = 0
@@ -151,7 +151,7 @@ class AlpacaBacktestBase:
 
         for bar in range(len(self.dates)):
             date = self.dates[bar]
-            if date.weekday() == 4:  # Friday (Mon=0 … Fri=4)
+            if date.weekday() == 0:  # Monday (Mon=0 … Fri=4)
                 self.on_bar(bar)
                 value = self.get_portfolio_value(bar)
                 self.equity_curve.append((date, value))

@@ -85,7 +85,7 @@ def main() -> int:
         log.info("  Lookback   : %d days", config.LOOKBACK)
         log.info("  Top-N      : %d", config.TOP_N)
         if args.capital_cap is not None:
-            log.info("  Capital Cap: $%,.0f", args.capital_cap)
+            log.info("  Capital Cap: $%s", f"{args.capital_cap:,.0f}")
         log.info("=" * 55)
 
         trader = LiveMomentumTrader(

@@ -62,7 +62,7 @@ def run_backtest() -> None:
         log.info("  Lookback     : %d days", config.LOOKBACK)
         log.info("  Top-N        : %d", config.TOP_N)
         log.info("  Period       : %s → %s", config.START_DATE, config.END_DATE)
-        log.info("  Capital      : $%,.0f", config.INITIAL_AMOUNT)
+        log.info("  Capital      : $%s", f"{config.INITIAL_AMOUNT:,.0f}")
         log.info("  FTC/PTC      : %s / %s", config.FTC, config.PTC)
         log.info("=" * 55)
 
