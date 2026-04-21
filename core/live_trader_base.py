@@ -70,7 +70,7 @@ class AlpacaLiveTraderBase:
             symbol=symbol,
             qty=qty,
             side=side,
-            time_in_force=TimeInForce.DAY,
+            time_in_force=TimeInForce.CLS,
         )
         order = self.client.submit_order(request)
         log.info(

@@ -1,22 +1,4 @@
-## ADDED Requirements
-
-### Requirement: Connect to Alpaca paper trading account
-The live trader SHALL connect to Alpaca's paper trading endpoint using `TradingClient(api_key, secret_key, paper=True)` and MUST NOT connect to the live trading endpoint.
-
-#### Scenario: Paper trading connection established
-- **WHEN** `LiveTrader` is instantiated
-- **THEN** it creates a `TradingClient` with `paper=True` and verifies the account is accessible
-
-#### Scenario: Live endpoint connection refused
-- **WHEN** `paper=False` is passed to `TradingClient`
-- **THEN** the `LiveTrader` constructor raises a `ValueError` refusing to proceed
-
-### Requirement: Compute momentum signal using latest market data
-The live trader SHALL fetch the most recent N+1 daily bars for all M7 symbols using `StockHistoricalDataClient`, compute N-day returns, and rank symbols — identical logic to the backtest signal.
-
-#### Scenario: Signal computed from latest data
-- **WHEN** `compute_signal()` is called
-- **THEN** it returns a ranked list of symbols using the same lookback window as the configured backtest
+## MODIFIED Requirements
 
 ### Requirement: Submit market orders for target portfolio
 The live trader SHALL submit `MarketOrderRequest` buy and sell orders using `TimeInForce.CLS` (Market-on-Close) so that live execution price matches the closing price assumed by the backtest engine. Orders MUST be submitted while the market is open and before the exchange MOC cutoff (3:50 PM ET / 19:50 UTC).
@@ -43,10 +25,3 @@ The live trader SHALL expose a `rebalance()` method that executes the full signa
 #### Scenario: Market closed handling
 - **WHEN** `rebalance()` is called outside market hours
 - **THEN** a `RuntimeError` is raised and no orders are submitted
-
-### Requirement: Log all order submissions
-The live trader SHALL log each order submission (symbol, side, quantity, order ID) to stdout.
-
-#### Scenario: Order logged on submission
-- **WHEN** any order is submitted
-- **THEN** a line is printed: `[YYYY-MM-DD HH:MM] BUY/SELL <qty> <symbol> → order_id=<id>`

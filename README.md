@@ -38,10 +38,10 @@ Optional capital cap:
 python scripts/weekly_live_rebalance.py --capital-cap 30000
 ```
 
-Example crontab entry (every Monday regular session, 14:35 UTC):
+Example crontab entry (every Monday pre-close, 19:45 UTC / 2:45 PM ET — 5-min buffer before Alpaca MOC cutoff):
 
 ```cron
-35 14 * * 1 cd /home/chenyang/Git/alpaca-lab && /home/chenyang/miniconda3/envs/strategy-lab/bin/python scripts/weekly_live_rebalance.py --capital-cap 30000 >> output/live_rebalance.log 2>&1
+45 19 * * 1 cd /home/chenyang/Git/alpaca-lab && /home/chenyang/miniconda3/envs/strategy-lab/bin/python scripts/weekly_live_rebalance.py --capital-cap 30000 >> output/live_rebalance.log 2>&1
 ```
 
-This timing is a conservative regular-hours choice across DST changes and avoids pre-market execution.
+This timing submits Market-on-Close (MOC) orders, aligning live execution with the closing price the backtest assumes. 19:45 UTC is DST-safe and provides a 5-minute buffer before the NYSE MOC cutoff (19:50 UTC).

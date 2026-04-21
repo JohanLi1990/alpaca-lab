@@ -65,7 +65,8 @@ def main() -> int:
 
     log = _setup_logging(repo_root / "output" / "live_rebalance.log")
 
-    # Monday-only safety guard in UTC; cron should still be scheduled weekly.
+    # Monday-only safety guard in UTC. Cron: 45 19 * * 1 (19:45 UTC / 2:45 PM ET)
+    # — submits MOC orders with a 5-min buffer before the 19:50 UTC Alpaca MOC cutoff.
     now_utc = datetime.now(timezone.utc)
     if not args.force and now_utc.weekday() != 0:
         log.info(
