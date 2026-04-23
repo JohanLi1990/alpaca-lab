@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 from alpaca.data.historical import StockHistoricalDataClient
@@ -57,11 +57,14 @@ def fetch_bars(
     """
     client = _get_client()
 
+    start_dt = datetime.strptime(start, "%Y-%m-%d")
+    end_dt = datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)
+
     request = StockBarsRequest(
         symbol_or_symbols=symbols,
         timeframe=timeframe,
-        start=datetime.strptime(start, "%Y-%m-%d"),
-        end=datetime.strptime(end, "%Y-%m-%d"),
+        start=start_dt,
+        end=end_dt,
     )
 
     bars = client.get_stock_bars(request)
@@ -80,13 +83,12 @@ def fetch_bars(
         # Keep only OHLCV columns
         df = df[["open", "high", "low", "close", "volume"]]
 
-        # Compute log returns and drop NaN
+        # Compute log returns while preserving the first requested OHLCV bar.
         df["return"] = np.log(df["close"] / df["close"].shift(1))
-        df.dropna(inplace=True)
 
         if df.empty:
             raise ValueError(
-                f"Symbol '{symbol}' has no data after computing returns for {start} to {end}."
+                f"Symbol '{symbol}' returned no OHLCV data for the range {start} to {end}."
             )
 
         result[symbol] = df

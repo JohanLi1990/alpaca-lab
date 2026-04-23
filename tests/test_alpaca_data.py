@@ -1,0 +1,56 @@
+import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import pandas as pd
+
+from data.alpaca_data import fetch_bars
+
+
+class FetchBarsTests(unittest.TestCase):
+    def _make_bars_response(self) -> SimpleNamespace:
+        index = pd.MultiIndex.from_tuples(
+            [
+                ("NXPI", pd.Timestamp("2026-04-22T00:00:00Z")),
+                ("NXPI", pd.Timestamp("2026-04-23T00:00:00Z")),
+            ],
+            names=["symbol", "timestamp"],
+        )
+        df = pd.DataFrame(
+            {
+                "open": [200.0, 202.0],
+                "high": [201.0, 203.0],
+                "low": [199.0, 201.0],
+                "close": [200.5, 202.5],
+                "volume": [1000, 1100],
+            },
+            index=index,
+        )
+        return SimpleNamespace(df=df)
+
+    @patch("data.alpaca_data._get_client")
+    def test_fetch_bars_uses_inclusive_end_date_for_daily_requests(self, mock_get_client):
+        mock_client = mock_get_client.return_value
+        mock_client.get_stock_bars.return_value = self._make_bars_response()
+
+        fetch_bars(["NXPI"], start="2026-04-14", end="2026-04-23")
+
+        request = mock_client.get_stock_bars.call_args.args[0]
+        self.assertEqual(str(request.start.date()), "2026-04-14")
+        self.assertEqual(str(request.end.date()), "2026-04-24")
+
+    @patch("data.alpaca_data._get_client")
+    def test_fetch_bars_preserves_first_requested_ohlcv_row(self, mock_get_client):
+        mock_client = mock_get_client.return_value
+        mock_client.get_stock_bars.return_value = self._make_bars_response()
+
+        result = fetch_bars(["NXPI"], start="2026-04-14", end="2026-04-23")
+
+        nxpi = result["NXPI"]
+        self.assertEqual(len(nxpi), 2)
+        self.assertTrue(pd.isna(nxpi.iloc[0]["return"]))
+        self.assertEqual(nxpi.index[-1].strftime("%Y-%m-%d"), "2026-04-23")
+
+
+if __name__ == "__main__":
+    unittest.main()

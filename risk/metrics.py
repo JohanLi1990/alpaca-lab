@@ -43,6 +43,47 @@ def sharpe_ratio(
     return float(returns.mean() / std * math.sqrt(periods_per_year))
 
 
+def sharpe_ratio_from_returns(
+    returns: list[float] | pd.Series,
+    periods_per_year: int | None = None,
+) -> float:
+    """Sharpe ratio from a list of returns (no annualization for event-driven data).
+
+    Parameters
+    ----------
+    returns : list of floats or pd.Series
+        Individual returns (e.g., per-trade returns).
+    periods_per_year : int, optional
+        If provided, annualizes the ratio. If None (default), no annualization.
+        Use None for event-driven data (e.g., earnings-driven trades).
+
+    Returns
+    -------
+    float
+        Sharpe ratio.  Returns 0.0 if volatility is zero or data has < 2 points.
+    """
+    if isinstance(returns, list):
+        returns = pd.Series(returns)
+    else:
+        returns = returns.copy()
+
+    if len(returns) < 2:
+        return 0.0
+
+    mean_ret = returns.mean()
+    std = returns.std()
+
+    if std == 0 or math.isnan(std):
+        return 0.0
+
+    sharpe = float(mean_ret / std)
+
+    if periods_per_year is not None and periods_per_year > 0:
+        sharpe *= math.sqrt(periods_per_year)
+
+    return sharpe
+
+
 def max_drawdown(equity_curve: list[tuple] | pd.Series) -> float:
     """Maximum peak-to-trough drawdown as a percentage (negative value).
 
