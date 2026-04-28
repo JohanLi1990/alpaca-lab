@@ -40,10 +40,13 @@ core/
   __init__.py
   backtest_base.py
   live_trader_base.py
+  pead_state_manager.py
+  pead_trade_logger.py
 data/
   __init__.py
   alpaca_data.py
   earnings_calendar.py
+  pead_calendar.py
   pre_earnings_features.py
 openspec/
   changes/
@@ -98,6 +101,34 @@ openspec/
         design.md
         proposal.md
         tasks.md
+      2026-04-23-pead-live-multi-symbol/
+        specs/
+          pead-live-trader/
+            spec.md
+          pead-state-manager/
+            spec.md
+          pead-trade-logger/
+            spec.md
+        .openspec.yaml
+        design.md
+        proposal.md
+        tasks.md
+      2026-04-24-pead-configurable-entry-offset/
+        specs/
+          data-layer/
+            spec.md
+          live-trader/
+            spec.md
+          pead-backtest/
+            spec.md
+          pead-entry-timing-config/
+            spec.md
+          pre-earnings-features/
+            spec.md
+        .openspec.yaml
+        design.md
+        proposal.md
+        tasks.md
   specs/
     backtest-engine/
       spec.md
@@ -113,23 +144,38 @@ openspec/
       spec.md
     pead-backtest/
       spec.md
+    pead-entry-timing-config/
+      spec.md
+    pead-live-trader/
+      spec.md
+    pead-state-manager/
+      spec.md
+    pead-trade-logger/
+      spec.md
     pre-earnings-features/
       spec.md
     risk-analytics/
       spec.md
   config.yaml
-output/
-  .gitkeep
 risk/
   __init__.py
   metrics.py
 scripts/
+  pead_live_cronjob.py
   weekly_live_rebalance.py
 strategies/
   __init__.py
   momentum.py
   pead_backtest.py
+  pead_classifier_live.py
   pead_classifier.py
+  pead_live_trader.py
+tests/
+  test_alpaca_data.py
+  test_pead_backtest.py
+  test_pead_calendar.py
+  test_pead_live_cronjob.py
+  test_pre_earnings_features.py
 .gitignore
 .repomixignore
 config.py
@@ -139,6 +185,220 @@ run.py
 ```
 
 # Files
+
+## File: core/__init__.py
+````python
+
+````
+
+## File: core/pead_state_manager.py
+````python
+"""PEAD live trading state manager.
+
+Manages JSON-based state file tracking current open positions per symbol.
+Handles idempotency, atomic writes, and automatic cleanup of stale entries.
+"""
+⋮----
+log = logging.getLogger(__name__)
+⋮----
+class PEADStateManager
+⋮----
+"""Manages persistent state for live PEAD trading positions.
+    
+    State file structure:
+    {
+      "NXPI": {
+        "earnings_date": "2026-04-30",
+        "entry_date": "2026-04-27",
+        "entry_price": 125.50,
+        "entry_qty": 80,
+        "created_at": "2026-04-27T16:00:00Z"
+      }
+    }
+    """
+⋮----
+def __init__(self, state_file: str = "output/pead_live_state.json")
+⋮----
+"""Initialize state manager.
+        
+        Parameters
+        ----------
+        state_file : str
+            Path to JSON state file (default: output/pead_live_state.json)
+        """
+⋮----
+def load_state(self) -> None
+⋮----
+"""Load state from JSON file, creating empty state if file doesn't exist."""
+⋮----
+def save_state(self) -> None
+⋮----
+"""Save state to JSON file with atomic write (pretty-printed)."""
+⋮----
+# Write to temporary file first, then atomically rename
+temp_file = self.state_file.with_suffix('.tmp')
+⋮----
+"""Record a new open position (entry executed).
+        
+        Parameters
+        ----------
+        symbol : str
+            Stock symbol (e.g., "NXPI")
+        earnings_date : str
+            Earnings date in YYYY-MM-DD format
+        entry_date : str
+            Entry date in YYYY-MM-DD format
+        entry_price : float
+            Entry fill price
+        entry_qty : int
+            Entry fill quantity
+        """
+⋮----
+def remove_position(self, symbol: str) -> None
+⋮----
+"""Delete position after exit (clean slate for next earnings event).
+        
+        Parameters
+        ----------
+        symbol : str
+            Stock symbol (e.g., "NXPI")
+        """
+⋮----
+def get_position(self, symbol: str) -> dict[str, Any] | None
+⋮----
+"""Check if symbol has an open position and return details.
+        
+        Parameters
+        ----------
+        symbol : str
+            Stock symbol (e.g., "NXPI")
+            
+        Returns
+        -------
+        dict or None
+            Position details if open, else None
+        """
+⋮----
+def already_traded(self, symbol: str, earnings_date: str) -> bool
+⋮----
+"""Check if we already traded this symbol for this earnings event (idempotency).
+        
+        Parameters
+        ----------
+        symbol : str
+            Stock symbol (e.g., "NXPI")
+        earnings_date : str
+            Earnings date in YYYY-MM-DD format
+            
+        Returns
+        -------
+        bool
+            True if position exists for this symbol and same earnings_date
+        """
+⋮----
+def cleanup_stale_entries(self, days: int = 30) -> None
+⋮----
+"""Remove entries older than specified days (handles missed exits).
+        
+        Parameters
+        ----------
+        days : int
+            Entries older than this many days are removed (default: 30)
+        """
+cutoff_time = datetime.now(timezone.utc) - timedelta(days=days)
+stale_symbols = []
+⋮----
+created_at_str = position.get("created_at")
+⋮----
+created_at = datetime.fromisoformat(created_at_str)
+# Ensure timezone-aware comparison
+⋮----
+created_at = created_at.replace(tzinfo=timezone.utc)
+````
+
+## File: core/pead_trade_logger.py
+````python
+"""PEAD live trading trade logger.
+
+Maintains append-only CSV log of all entry/exit trades for audit trail
+and performance analysis.
+"""
+⋮----
+log = logging.getLogger(__name__)
+⋮----
+class PEADTradeLogger
+⋮----
+"""Logs all PEAD live trades to append-only CSV file.
+    
+    CSV columns:
+    symbol, earnings_date, entry_date, exit_date, entry_price, exit_price,
+    qty, pnl, pnl_pct, timestamp
+    """
+⋮----
+CSV_HEADER = [
+⋮----
+def __init__(self, log_file: str = "output/pead_live_trades.csv")
+⋮----
+"""Initialize trade logger.
+        
+        Parameters
+        ----------
+        log_file : str
+            Path to CSV trade log file (default: output/pead_live_trades.csv)
+        """
+⋮----
+def initialize_log(self) -> None
+⋮----
+"""Create CSV header if file doesn't exist."""
+⋮----
+writer = csv.DictWriter(f, fieldnames=self.CSV_HEADER)
+⋮----
+"""Log a completed trade (entry + exit).
+        
+        Parameters
+        ----------
+        symbol : str
+            Stock symbol
+        earnings_date : str
+            Earnings date (YYYY-MM-DD)
+        entry_date : str
+            Entry date (YYYY-MM-DD)
+        exit_date : str
+            Exit date (YYYY-MM-DD)
+        entry_price : float
+            Entry fill price
+        exit_price : float
+            Exit fill price
+        qty : int
+            Shares traded
+        pnl : float
+            Profit/loss in dollars
+        pnl_pct : float
+            Profit/loss as percentage (0.05 = 5%)
+        """
+⋮----
+timestamp = datetime.now(timezone.utc).isoformat()
+row = {
+⋮----
+"""Optionally log a skipped entry for analysis (pred_label=0 case).
+        
+        Parameters
+        ----------
+        symbol : str
+            Stock symbol
+        earnings_date : str
+            Earnings date (YYYY-MM-DD)
+        entry_date : str
+            Entry date (YYYY-MM-DD)
+        reason : str
+            Reason for skip (default: "pred_label=0")
+        """
+````
+
+## File: data/__init__.py
+````python
+
+````
 
 ## File: data/earnings_calendar.py
 ````python
@@ -253,12 +513,203 @@ df = pd.DataFrame(classified_rows)
 df = df[df["release_time"] == timing].copy()
 ````
 
+## File: data/pead_calendar.py
+````python
+"""PEAD live trading calendar utilities.
+
+Handles earnings date fetching, NYSE trading calendar operations,
+and T-N offset calculations.
+"""
+⋮----
+log = logging.getLogger(__name__)
+⋮----
+_MARKET_TZ = ZoneInfo("America/New_York")
+⋮----
+_NYSE_HOLIDAYS = pd.DatetimeIndex([])
+⋮----
+def get_current_market_datetime(now: datetime | None = None) -> datetime
+⋮----
+"""Return the current timestamp in US/Eastern market time.
+
+    If ``now`` is provided as a naive datetime, treat it as UTC for deterministic
+    tests and cron environments.
+    """
+⋮----
+now = now.replace(tzinfo=timezone.utc)
+⋮----
+def get_current_market_date(now: datetime | None = None) -> datetime.date
+⋮----
+"""Return today's date in US/Eastern market time."""
+⋮----
+def _get_nyse_holidays(start: pd.Timestamp, end: pd.Timestamp) -> pd.DatetimeIndex
+⋮----
+federal_holidays = USFederalHolidayCalendar().holidays(start=start, end=end)
+good_fridays = GoodFriday.dates(start, end)
+holidays = federal_holidays.union(good_fridays)
+⋮----
+def get_trading_dates(start: str | datetime, end: str | datetime) -> pd.DatetimeIndex
+⋮----
+"""Return all NYSE trading dates in range (exclude weekends, US holidays).
+    
+    Parameters
+    ----------
+    start : str or datetime
+        Start date (YYYY-MM-DD or datetime)
+    end : str or datetime
+        End date (YYYY-MM-DD or datetime)
+        
+    Returns
+    -------
+    pd.DatetimeIndex
+        All trading dates between start and end (inclusive)
+    """
+start_ts = pd.Timestamp(start)
+end_ts = pd.Timestamp(end)
+⋮----
+holidays = _get_nyse_holidays(start_ts, end_ts)
+⋮----
+# Business day range (Mon-Fri)
+date_range = pd.bdate_range(start=start_ts, end=end_ts, freq='B')
+⋮----
+# Remove holidays
+trading_dates = date_range[~date_range.isin(holidays)]
+⋮----
+"""Compute a trading date at offset from anchor (accounting for weekends/holidays).
+    
+    Parameters
+    ----------
+    anchor_date : str or datetime
+        Reference date (YYYY-MM-DD or datetime)
+    offset : int
+        Trading day offset (-3 for T-3, +1 for T+1, etc.)
+    start : str or datetime, optional
+        Start of trading calendar range (default: 2 years before anchor)
+    end : str or datetime, optional
+        End of trading calendar range (default: 2 years after anchor)
+        
+    Returns
+    -------
+    datetime or None
+        Trading date at offset, or None if unavailable
+    """
+anchor_ts = pd.Timestamp(anchor_date)
+⋮----
+# Default calendar range if not provided
+⋮----
+start = anchor_ts - timedelta(days=730)
+⋮----
+end = anchor_ts + timedelta(days=730)
+⋮----
+trading_dates = get_trading_dates(start, end)
+⋮----
+# Normalize anchor to date-only for comparison
+anchor_normalized = pd.Timestamp(anchor_ts.date())
+⋮----
+anchor_idx = trading_dates.get_loc(anchor_normalized)
+shifted_idx = anchor_idx + offset
+⋮----
+"""Return the trading date for entry day T-E."""
+⋮----
+"""Return the last fully known trading date before entry (T-(E+1))."""
+⋮----
+"""Return derived PEAD timing dates for a configured entry offset."""
+⋮----
+"""Check if today is T-3 for a symbol (entry trigger).
+    
+    Parameters
+    ----------
+    symbol : str
+        Stock symbol
+    earnings_dates_dict : dict[str, str]
+        Mapping of symbol → earnings_date (YYYY-MM-DD)
+        
+    Returns
+    -------
+    bool
+        True if today is exactly T-3 for this symbol's nearest earnings
+    """
+⋮----
+earnings_date = earnings_dates_dict[symbol]
+entry_date = get_entry_trading_date(earnings_date, entry_offset_days)
+⋮----
+today = pd.Timestamp(get_current_market_date())
+⋮----
+"""Check if today is T+1 or later for a symbol (exit trigger).
+    
+    Parameters
+    ----------
+    symbol : str
+        Stock symbol
+    earnings_dates_dict : dict[str, str]
+        Mapping of symbol → earnings_date (YYYY-MM-DD)
+        
+    Returns
+    -------
+    bool
+        True if today is T+1 or later for this symbol's earnings
+    """
+⋮----
+t_plus_1 = calculate_offset_trading_date(earnings_date, 1)
+⋮----
+def fetch_nearest_earnings(symbol: str, limit: int = 5) -> str | None
+⋮----
+"""Fetch nearest upcoming earnings date for a symbol.
+    
+    Parameters
+    ----------
+    symbol : str
+        Stock symbol
+    limit : int
+        Number of recent earnings to fetch from yfinance
+        
+    Returns
+    -------
+    str or None
+        Nearest future earnings date (YYYY-MM-DD), or None if not found
+    """
+⋮----
+today = get_current_market_date()
+tomorrow = today + timedelta(days=1)
+end_date = today + timedelta(days=365)
+⋮----
+events_df = fetch_earnings_events(
+⋮----
+nearest_earnings = events_df.iloc[0]["earnings_date"]
+⋮----
+# Simple cache to avoid repeated yfinance calls within same cronjob execution
+_earnings_cache: dict[str, str] = {}
+⋮----
+def get_cached_earnings(symbol: str, use_cache: bool = True) -> str | None
+⋮----
+"""Get earnings date for symbol with optional caching.
+    
+    Parameters
+    ----------
+    symbol : str
+        Stock symbol
+    use_cache : bool
+        Whether to use cache (default: True)
+        
+    Returns
+    -------
+    str or None
+        Earnings date (YYYY-MM-DD)
+    """
+⋮----
+earnings_date = fetch_nearest_earnings(symbol)
+⋮----
+def clear_earnings_cache() -> None
+⋮----
+"""Clear earnings date cache (useful for testing)."""
+````
+
 ## File: data/pre_earnings_features.py
 ````python
-"""Pre-earnings feature engineering from T-7 to T-1 daily bars.
+"""Pre-earnings feature engineering for PEAD training and live inference.
 
-Computes features from daily OHLCV bars in the 7-day window preceding each
-earnings event, with no forward-looking data.
+Computes features from daily OHLCV bars using only information available by the
+decision date. Training mode also derives the target label from T-1 close to
+earnings-day open.
 """
 ⋮----
 log = logging.getLogger(__name__)
@@ -268,7 +719,8 @@ log = logging.getLogger(__name__)
     Parameters
     ----------
     events_df : pd.DataFrame
-        Events DataFrame with columns: earnings_date, t_minus_1, symbol.
+        Events DataFrame with columns: earnings_date, symbol, and either
+        t_minus_1 (training) or t_minus_3 (inference).
     bars_dict : dict[str, pd.DataFrame]
         Dict mapping symbol → OHLCV DataFrame indexed by date with columns:
         open, high, low, close, volume.
@@ -276,6 +728,12 @@ log = logging.getLogger(__name__)
         The symbol to analyze (e.g., "GOOGL").
     qqq_symbol : str
         The benchmark symbol for relative features (default "QQQ").
+    include_labels : bool
+        If True, require T-1 and earnings-day bars and compute y/gap_return.
+        If False, build inference features using only bars available by T-3.
+    entry_offset_days : int
+        Entry day offset E where entry occurs on T-E and the feature window ends
+        at T-(E+1).
 
     Returns
     -------
@@ -290,8 +748,8 @@ log = logging.getLogger(__name__)
         - atr_ratio: mean range / 20-day baseline range
         - gap_count: number of intraday gaps > 0.5%
         - rel_drift_vs_qqq: stock return - QQQ return
-        - y: binary label (1 if T open > T-1 close, else 0)
-        - gap_return: continuous gap return
+        - y: binary label (1 if T open > T-1 close, else 0), training only
+        - gap_return: continuous gap return, training only
 
     Raises
     ------
@@ -311,19 +769,25 @@ events_df = events_df.copy()
 rows = []
 ⋮----
 earnings_date = event["earnings_date"].date()
-t_minus_1_date = event["t_minus_1"].date()
 ⋮----
+t_minus_1_date = event["t_minus_1"].date()
 t_minus_1_ts = pd.Timestamp(t_minus_1_date)
 ⋮----
 t_minus_1_idx = int(trading_dates.get_loc(t_minus_1_ts))  # type: ignore[arg-type]
 ⋮----
-# Feature window: the last 7 trading days ending at T-3 close.
-t_minus_3_ts = trading_dates[t_minus_1_idx - 2]
-all_bars_before_t3 = bars[bars.index <= t_minus_3_ts].copy()
+t_feature_anchor_ts = trading_dates[t_minus_1_idx - entry_offset_days]
 ⋮----
-feature_window = all_bars_before_t3.iloc[-7:].copy()
+t_feature_anchor_ts = pd.Timestamp(event["t_feature_anchor"].date())
 ⋮----
-# Verify no look-ahead relative to the T-3 entry decision.
+eligible_dates = trading_dates[trading_dates < pd.Timestamp(earnings_date)]
+⋮----
+t_feature_anchor_ts = eligible_dates[-entry_offset_days]
+⋮----
+all_bars_before_anchor = bars[bars.index <= t_feature_anchor_ts].copy()
+⋮----
+feature_window = all_bars_before_anchor.iloc[-7:].copy()
+⋮----
+# Verify no look-ahead relative to the offset-derived entry decision.
 ⋮----
 t_open_date = pd.Timestamp(earnings_date)
 ⋮----
@@ -350,11 +814,11 @@ down_day_count = (daily_ret < 0).sum()
 # Baseline: 20 trading days immediately prior to the 7-day feature window.
 # feature_window is the last 7 rows of all_bars_before_t1, so baseline
 # ends at the row immediately before that trailing window.
-baseline_end_idx = len(all_bars_before_t3) - 8
+baseline_end_idx = len(all_bars_before_anchor) - 8
 ⋮----
-baseline_window = all_bars_before_t3.iloc[baseline_end_idx - 19:baseline_end_idx + 1].copy()
+baseline_window = all_bars_before_anchor.iloc[baseline_end_idx - 19:baseline_end_idx + 1].copy()
 ⋮----
-baseline_window = all_bars_before_t3.iloc[:baseline_end_idx + 1].copy()
+baseline_window = all_bars_before_anchor.iloc[:baseline_end_idx + 1].copy()
 ⋮----
 baseline_vol = baseline_window["volume"].mean()
 ⋮----
@@ -382,15 +846,17 @@ gap_count = (gaps > 0.005).sum()
 ⋮----
 # Feature 8: Relative to QQQ
 # Extract QQQ bars for the same window
-all_qqq_before_t3 = bars_qqq[bars_qqq.index <= t_minus_3_ts].copy()
+all_qqq_before_anchor = bars_qqq[bars_qqq.index <= t_feature_anchor_ts].copy()
 ⋮----
-qqq_window = all_qqq_before_t3.iloc[-7:].copy()
+qqq_window = all_qqq_before_anchor.iloc[-7:].copy()
 qqq_close_t7 = float(qqq_window["close"].iloc[0])
 qqq_close_t1 = float(qqq_window["close"].iloc[-1])
 qqq_drift = (qqq_close_t1 - qqq_close_t7) / qqq_close_t7 if qqq_close_t7 > 0 else 0.0
 rel_drift_vs_qqq = drift_7d - qqq_drift
 ⋮----
 rel_drift_vs_qqq = drift_7d
+⋮----
+row = {
 ⋮----
 # Target label remains the original PEAD gap objective: T-1 close to T open.
 ⋮----
@@ -403,9 +869,598 @@ open_t_value = bars.loc[t_open_date, "open"]
 open_t_value = open_t_value.iloc[0]
 open_t_float = np.asarray(open_t_value, dtype=np.float64).item()
 gap_return = (open_t_float / close_t1_float - 1.0) if close_t1_float > 0 else 0.0
-y = 1 if gap_return > 0.0 else 0
 ⋮----
 result = pd.DataFrame(rows)
+````
+
+## File: openspec/changes/archive/2026-04-19-momentum-m7-strategy/specs/backtest-engine/spec.md
+````markdown
+## ADDED Requirements
+
+### Requirement: Event-driven iteration over time bars
+The backtest engine SHALL iterate over each time bar in chronological order, evaluating strategy signals and simulating order execution at each bar.
+
+#### Scenario: Bar-by-bar event loop
+- **WHEN** `run_backtest()` is called
+- **THEN** the engine processes each bar from index `lookback` to `len(data)-1` in order, calling `on_bar(bar)` exactly once per bar
+
+### Requirement: Simulated order execution with transaction costs
+The engine SHALL simulate buy and sell orders using the closing price at the signal bar, applying configurable fixed transaction cost (`ftc`) and proportional transaction cost (`ptc`).
+
+#### Scenario: Buy order reduces cash balance
+- **WHEN** a buy order is placed for N units at price P with ptc=0.001 and ftc=0
+- **THEN** cash decreases by `N * P * (1 + ptc) + ftc`
+
+#### Scenario: Sell order increases cash balance
+- **WHEN** a sell order is placed for N units at price P with ptc=0.001 and ftc=0
+- **THEN** cash increases by `N * P * (1 - ptc) - ftc`
+
+### Requirement: Multi-symbol portfolio state tracking
+The engine SHALL maintain portfolio state across multiple symbols: cash balance, units held per symbol, and current position per symbol.
+
+#### Scenario: Portfolio state initialized correctly
+- **WHEN** a backtest is instantiated with `initial_amount=10000`
+- **THEN** cash equals 10000, units_held is an empty dict, and all positions are neutral (0)
+
+#### Scenario: Portfolio state updated after trade
+- **WHEN** a buy order is executed for symbol S
+- **THEN** `units_held[S]` reflects the purchased units and cash reflects the deducted amount
+
+### Requirement: Equity curve recorded at each rebalance
+The engine SHALL record total portfolio value (cash + mark-to-market holdings) at each rebalance event, producing an equity curve as a pandas Series indexed by date.
+
+#### Scenario: Equity curve length matches rebalance count
+- **WHEN** backtest runs over a period with W weekly rebalances
+- **THEN** the equity curve has exactly W+1 entries (including initial value)
+
+### Requirement: Final close-out and summary
+The engine SHALL close all open positions at the last bar and print a summary: final balance, net performance (%), number of trades, and call `calculate_risk_metrics()`.
+
+#### Scenario: Close-out at end of backtest
+- **WHEN** the event loop reaches the final bar
+- **THEN** all positions are liquidated at the last closing price and the final cash balance reflects all proceeds
+````
+
+## File: openspec/changes/archive/2026-04-19-momentum-m7-strategy/specs/data-layer/spec.md
+````markdown
+## ADDED Requirements
+
+### Requirement: Fetch daily OHLCV bars for a symbol universe
+The system SHALL fetch historical daily bar data for a list of symbols using alpaca-py `StockHistoricalDataClient`, returning a dict mapping each symbol to a pandas DataFrame with columns: `open`, `high`, `low`, `close`, `volume` indexed by date.
+
+#### Scenario: Successful multi-symbol fetch
+- **WHEN** `fetch_bars(symbols, start, end, timeframe)` is called with a list of valid symbols and a date range
+- **THEN** the function returns a dict where each key is a symbol string and each value is a DataFrame with OHLCV columns indexed by UTC date
+
+#### Scenario: Symbol with no data in range
+- **WHEN** a symbol is requested but has no data in the given date range
+- **THEN** the function raises a descriptive `ValueError` identifying the missing symbol
+
+### Requirement: Load API credentials from environment
+The data layer SHALL load `APCA_API_KEY_ID` and `APCA_API_SECRET_KEY` from environment variables (via `.env` file) and MUST NOT accept credentials as hardcoded arguments.
+
+#### Scenario: Credentials loaded from .env
+- **WHEN** `fetch_bars()` is called and a `.env` file with valid credentials exists
+- **THEN** the `StockHistoricalDataClient` authenticates successfully and returns data
+
+#### Scenario: Missing credentials
+- **WHEN** `APCA_API_KEY_ID` or `APCA_API_SECRET_KEY` is not set in the environment
+- **THEN** the function raises a `EnvironmentError` before making any API calls
+
+### Requirement: Compute log returns after fetch
+The data layer SHALL add a `return` column to each symbol's DataFrame, computed as `log(close / close.shift(1))`, and drop rows with NaN values.
+
+#### Scenario: Returns column present after fetch
+- **WHEN** `fetch_bars()` returns successfully
+- **THEN** each symbol DataFrame contains a `return` column with no NaN values
+````
+
+## File: openspec/changes/archive/2026-04-19-momentum-m7-strategy/specs/live-trader/spec.md
+````markdown
+## ADDED Requirements
+
+### Requirement: Connect to Alpaca paper trading account
+The live trader SHALL connect to Alpaca's paper trading endpoint using `TradingClient(api_key, secret_key, paper=True)` and MUST NOT connect to the live trading endpoint.
+
+#### Scenario: Paper trading connection established
+- **WHEN** `LiveTrader` is instantiated
+- **THEN** it creates a `TradingClient` with `paper=True` and verifies the account is accessible
+
+#### Scenario: Live endpoint connection refused
+- **WHEN** `paper=False` is passed to `TradingClient`
+- **THEN** the `LiveTrader` constructor raises a `ValueError` refusing to proceed
+
+### Requirement: Compute momentum signal using latest market data
+The live trader SHALL fetch the most recent N+1 daily bars for all M7 symbols using `StockHistoricalDataClient`, compute N-day returns, and rank symbols — identical logic to the backtest signal.
+
+#### Scenario: Signal computed from latest data
+- **WHEN** `compute_signal()` is called
+- **THEN** it returns a ranked list of symbols using the same lookback window as the configured backtest
+
+### Requirement: Submit market orders for target portfolio
+The live trader SHALL submit `MarketOrderRequest` buy orders for new holdings and sell orders for dropped holdings at market price.
+
+#### Scenario: Buy order submitted for new holding
+- **WHEN** symbol S enters the top-N but is not currently held
+- **THEN** a market buy order for `floor(allocation / current_price)` shares of S is submitted
+
+#### Scenario: Sell order submitted for dropped holding
+- **WHEN** symbol S was held but no longer in top-N
+- **THEN** a market sell order for all held shares of S is submitted
+
+#### Scenario: No order for unchanged holdings
+- **WHEN** symbol S is in top-N and already held with approximately correct weight
+- **THEN** no order is submitted for S
+
+### Requirement: Weekly rebalance trigger
+The live trader SHALL expose a `rebalance()` method that executes the full signal → order cycle. It is the caller's responsibility to invoke this weekly (via cron, scheduler, or manual execution).
+
+#### Scenario: Rebalance completes without error
+- **WHEN** `rebalance()` is called on a Friday during market hours or pre-market
+- **THEN** all necessary orders are submitted and a summary is printed to stdout
+
+#### Scenario: Market closed handling
+- **WHEN** `rebalance()` is called outside market hours
+- **THEN** orders are submitted as market orders and will fill at next open; a warning is logged
+
+### Requirement: Log all order submissions
+The live trader SHALL log each order submission (symbol, side, quantity, order ID) to stdout.
+
+#### Scenario: Order logged on submission
+- **WHEN** any order is submitted
+- **THEN** a line is printed: `[YYYY-MM-DD HH:MM] BUY/SELL <qty> <symbol> → order_id=<id>`
+````
+
+## File: openspec/changes/archive/2026-04-19-momentum-m7-strategy/specs/momentum-strategy/spec.md
+````markdown
+## ADDED Requirements
+
+### Requirement: Rank symbols by N-day simple return
+The strategy SHALL compute the N-day simple price return for each symbol at each rebalance bar and rank symbols from highest to lowest return.
+
+#### Scenario: Returns computed at each rebalance
+- **WHEN** the rebalance event fires at bar T
+- **THEN** each symbol's score is `(close[T] - close[T-N]) / close[T-N]` where N is the configured lookback window
+
+#### Scenario: Symbols ranked correctly
+- **WHEN** NVDA has return=0.42, META=0.28, AAPL=0.05, others negative
+- **THEN** ranking is NVDA(1), META(2), AAPL(3), ... in descending order
+
+### Requirement: Go long top-N symbols equal-weight
+The strategy SHALL enter long positions in the top `top_n` ranked symbols, allocating equal weight (1/top_n of available capital) to each. Symbols outside the top-N SHALL be sold if currently held.
+
+#### Scenario: Equal-weight allocation
+- **WHEN** top_n=3 and available capital is $9000
+- **THEN** each of the 3 selected symbols receives $3000 of capital
+
+#### Scenario: Dropped symbol is sold
+- **WHEN** symbol S was in the top-N at the previous rebalance but is no longer in the top-N at the current rebalance
+- **THEN** all units of S are sold at the current closing price
+
+#### Scenario: New symbol enters top-N
+- **WHEN** symbol S enters the top-N at the current rebalance and is not currently held
+- **THEN** a buy order is placed for S using its equal-weight capital allocation
+
+### Requirement: Rebalance only on weekly frequency
+The strategy SHALL only execute rebalance logic on the last trading day of each calendar week (Friday, or Thursday if Friday is a holiday).
+
+#### Scenario: Rebalance fires on Friday
+- **WHEN** the current bar's date is a Friday
+- **THEN** the full ranking and rebalance logic executes
+
+#### Scenario: No trades on non-rebalance days
+- **WHEN** the current bar's date is Monday through Thursday
+- **THEN** no orders are placed and portfolio state is unchanged
+
+### Requirement: Configurable parameters
+The strategy SHALL accept `lookback` (int, days), `top_n` (int), `symbols` (list of str), `start` (str date), `end` (str date), `initial_amount` (float), `ftc` (float), and `ptc` (float) as constructor parameters.
+
+#### Scenario: Default parameters produce valid backtest
+- **WHEN** strategy is instantiated with symbols=M7, lookback=60, top_n=3, initial_amount=10000
+- **THEN** backtest runs without error over the configured date range
+````
+
+## File: openspec/changes/archive/2026-04-19-momentum-m7-strategy/specs/risk-analytics/spec.md
+````markdown
+## ADDED Requirements
+
+### Requirement: Compute annualized Sharpe ratio from equity curve
+The risk module SHALL compute the annualized Sharpe ratio from a weekly equity curve using the formula: `mean(weekly_returns) / std(weekly_returns) * sqrt(52)`, assuming risk-free rate of 0.
+
+#### Scenario: Sharpe ratio computed correctly
+- **WHEN** `sharpe_ratio(equity_curve, periods_per_year=52)` is called with a pandas Series of weekly portfolio values
+- **THEN** it returns a float representing the annualized Sharpe ratio
+
+#### Scenario: Flat equity curve returns zero Sharpe
+- **WHEN** all equity values are equal (zero volatility)
+- **THEN** the function returns 0.0 (not NaN or error)
+
+### Requirement: Compute maximum drawdown
+The risk module SHALL compute maximum drawdown as the largest peak-to-trough decline in the equity curve, expressed as a percentage: `(trough - peak) / peak * 100`.
+
+#### Scenario: Maximum drawdown computed
+- **WHEN** `max_drawdown(equity_curve)` is called
+- **THEN** it returns a negative float representing the worst percentage decline from any peak
+
+#### Scenario: Always-rising equity has zero drawdown
+- **WHEN** the equity curve is monotonically increasing
+- **THEN** `max_drawdown` returns 0.0
+
+### Requirement: Compute Calmar ratio
+The risk module SHALL compute the Calmar ratio as `annualized_return / abs(max_drawdown)`, where annualized return is `(final_value / initial_value) ^ (periods_per_year / n_periods) - 1`.
+
+#### Scenario: Calmar ratio computed
+- **WHEN** `calmar_ratio(equity_curve, periods_per_year=52)` is called
+- **THEN** it returns a positive float when the strategy is profitable
+
+### Requirement: Print risk summary
+The risk module SHALL provide a `print_summary(equity_curve)` function that prints Sharpe ratio, maximum drawdown, Calmar ratio, total return (%), and number of periods to stdout.
+
+#### Scenario: Summary printed after backtest
+- **WHEN** `print_summary(equity_curve)` is called
+- **THEN** all four metrics are printed with labels and rounded to 2 decimal places
+
+### Requirement: Plot equity curve
+The risk module SHALL provide a `plot_equity_curve(equity_curve, title)` function that renders a matplotlib line chart of portfolio value over time.
+
+#### Scenario: Plot generated without error
+- **WHEN** `plot_equity_curve(equity_curve, title="M7 Momentum")` is called
+- **THEN** a matplotlib figure is created and displayed (or saved if a path is provided)
+````
+
+## File: openspec/changes/archive/2026-04-19-momentum-m7-strategy/.openspec.yaml
+````yaml
+schema: spec-driven
+created: 2026-04-19
+````
+
+## File: openspec/changes/archive/2026-04-19-momentum-m7-strategy/design.md
+````markdown
+## Context
+
+This is a greenfield algorithmic trading project building on the event-driven backtest pattern from Hilpisch's *Python for Algorithmic Trading* (Chapter 6). The existing `BacktestBase` / `BacktestLongOnly` classes in `strategy-lab` provide proven mechanics (event loop, order simulation, P&L tracking) but are tightly coupled to a single symbol and a remote CSV data source. This project adapts that pattern for Alpaca's API, extends it to multi-symbol portfolios, and adds a live paper trading path.
+
+The `strategy-lab` conda environment provides all required dependencies: `alpaca-py`, `pandas`, `numpy`, `python-dotenv`.
+
+## Goals / Non-Goals
+
+**Goals:**
+- Layered architecture (`core/`, `data/`, `strategies/`) so future strategies share infrastructure without duplication
+- Event-driven backtest with full portfolio simulation: multi-symbol, weekly rebalance, transaction cost simulation
+- Risk analytics: annualized Sharpe ratio (√52), max drawdown, Calmar ratio, equity curve
+- Paper trading live execution via `alpaca-py` using the same signal as the backtest
+- Reproducible results with configurable parameters (lookback window, top-N holdings, backtest period)
+
+**Non-Goals:**
+- Intraday (sub-daily) bars — daily bars only for this change
+- Long-short — long-only
+- Live trading with real money — paper account only
+- Optimization / parameter sweep — single parameter set, no grid search
+- Portfolio margin / leverage calculations
+- Notifications or alerting
+
+## Decisions
+
+### D1: Layered architecture over strategy-per-folder
+
+**Decision**: Shared `core/`, `data/`, `risk/` modules; strategy implementations under `strategies/`.
+
+**Rationale**: A folder-per-strategy pattern duplicates data fetching, order simulation, and risk calculation across every strategy. The layered approach mirrors standard OOP design — abstract base classes in `core/`, concrete implementations in `strategies/`. When `mean_reversion` is added later, it subclasses `BacktestBase` and reuses `data/` and `risk/` unchanged.
+
+**Alternative considered**: Copy-paste from `strategy-lab` per strategy. Rejected — creates maintenance burden and diverging logic.
+
+```
+alpaca-lab/
+├── core/
+│   ├── backtest_base.py       ← AlpacaBacktestBase (abstract)
+│   └── live_trader_base.py    ← AlpacaLiveTraderBase (abstract)
+├── data/
+│   └── alpaca_data.py         ← fetch_bars() via alpaca-py
+├── risk/
+│   └── metrics.py             ← Sharpe, drawdown, Calmar, plot
+├── strategies/
+│   └── momentum.py            ← CrossSectionalMomentum(BacktestBase)
+├── config.py                  ← .env loading, M7 symbols, params
+└── run.py                     ← CLI entry point
+```
+
+### D2: Weekly rebalance frequency
+
+**Decision**: Rebalance every Friday (or last trading day of the week).
+
+**Rationale**: Cross-sectional momentum signal has low turnover on daily bars — rankings rarely change day-to-day among M7. Weekly rebalancing reduces transaction costs while capturing meaningful rank shifts. Monthly is too slow for a 7-stock universe where one breakout (e.g., NVDA) can dominate. Daily introduces noise.
+
+**Alternative considered**: Monthly. Rejected — with only 7 symbols, monthly is too coarse; a single outlier holds for too long.
+
+### D3: Momentum signal = N-day simple return, no skip window
+
+**Decision**: Signal = `(price[t] - price[t-N]) / price[t-N]`, no 1-month skip.
+
+**Rationale**: The classic "12-1" skip window (skip most recent month to avoid reversal) is designed for large cross-sectional universes. With only 7 highly-correlated mega-caps, the reversal effect is less pronounced and the skip window reduces the already-small information set. Start without skip; revisit if backtest shows reversal drag.
+
+**Alternative considered**: Log return rolling mean (Hilpisch style). Rejected in favor of simple price return — more interpretable and standard in momentum literature.
+
+### D4: Data fetching via alpaca-py `StockHistoricalDataClient`
+
+**Decision**: Fetch all M7 symbols in a single batched request, cache as a dict of DataFrames keyed by symbol.
+
+**Rationale**: Alpaca's API supports multi-symbol requests natively. Fetching once at backtest start and caching avoids repeated API calls during the event loop. The backtest iterates over time index using `.iloc[bar]` slices per the Hilpisch pattern.
+
+**Alternative considered**: Download to CSV and read locally. Acceptable for production but adds a data management step; fetch-and-cache is simpler for the first iteration.
+
+### D5: Risk metrics in standalone `risk/metrics.py`
+
+**Decision**: Risk calculations are pure functions operating on an equity curve (pandas Series), not methods on the backtest class.
+
+**Rationale**: Pure functions are easier to test, reuse across strategies, and compose. The backtest `close_out()` produces the equity curve; `risk/metrics.py` consumes it. This decouples strategy logic from analytics.
+
+### D6: Live trader uses polling loop, not WebSocket stream
+
+**Decision**: Live paper trader runs as a scheduled weekly job — compute signal at market open Friday, submit orders, exit.
+
+**Rationale**: Interday momentum does not require tick-level data. A simple script that runs once per week (cron or manual trigger) is far simpler than a persistent WebSocket connection. WebSocket is appropriate for intraday strategies (future work).
+
+**Alternative considered**: `StockDataStream` WebSocket. Rejected for this change — adds complexity without benefit for weekly frequency.
+
+## Risks / Trade-offs
+
+- **[Lookahead bias]** → Ensure rebalance signal uses close price of day T, execute at open of day T+1 (next Friday open). The backtest must simulate this correctly.
+- **[Survivorship bias]** → M7 is a backward-looking selection; all seven have survived and thrived. Backtest results will be optimistic vs. a live forward universe. Acknowledged limitation, acceptable for this learning project.
+- **[Alpaca API rate limits]** → Fetching 6 years of daily bars for 7 symbols is well within free tier limits. Low risk.
+- **[Paper trading order fills]** → Alpaca paper trading uses simulated fills at last trade price. May not perfectly reflect real slippage. Acceptable for paper.
+- **[M7 composition drift]** → The "M7" label is recent; historical data for these tickers exists back to 2019 but their collective identity as a group did not. Backtest treats them as a static universe throughout — this is a known approximation.
+
+## Open Questions
+
+- **Lookback window default**: Start with 60 days (3 months)? Easy to make configurable.
+- **Transaction cost simulation**: Use Alpaca's commission-free model (ptc=0, ftc=0) for paper, or simulate realistic costs (e.g., 0.1% ptc)?
+- **Benchmark**: Compare equity curve against SPY buy-and-hold? Would strengthen the backtest analysis.
+````
+
+## File: openspec/changes/archive/2026-04-19-momentum-m7-strategy/proposal.md
+````markdown
+## Why
+
+This project needs a repeatable, well-tested algorithmic trading strategy that can be backtested rigorously and deployed to paper trading. Cross-sectional momentum on the Magnificent 7 (M7) provides a focused, high-signal universe to validate the full pipeline — from data ingestion through live execution — before expanding to broader universes or additional strategies.
+
+## What Changes
+
+- Introduce a layered project structure with shared `core/`, `data/`, and `strategies/` packages to support multiple strategies without code duplication
+- Implement a cross-sectional momentum strategy targeting the M7 stocks (AAPL, MSFT, AMZN, NVDA, GOOGL, META, TSLA)
+- Build an event-driven backtester modeled after the Hilpisch pattern, adapted to fetch data from Alpaca's historical bars API
+- Add a risk analytics module computing Sharpe ratio, maximum drawdown, and Calmar ratio
+- Implement a paper trading live trader using `alpaca-py` TradingClient with weekly rebalancing
+
+## Capabilities
+
+### New Capabilities
+
+- `data-layer`: Fetch and cache daily OHLCV bars for a symbol universe via alpaca-py `StockHistoricalDataClient`
+- `backtest-engine`: Event-driven backtesting base class supporting multi-symbol portfolios with transaction cost simulation
+- `momentum-strategy`: Cross-sectional momentum signal: rank M7 by N-day return, go long top 3 equal-weight, rebalance weekly
+- `risk-analytics`: Compute annualized Sharpe ratio (√52 for weekly), maximum drawdown (peak-to-trough), and Calmar ratio from an equity curve
+- `live-trader`: Paper trading execution using `alpaca-py` TradingClient — weekly rebalance, same signal as backtest
+
+### Modified Capabilities
+
+## Impact
+
+- **New packages**: `core/`, `data/`, `strategies/` under `alpaca-lab/`
+- **Dependencies**: `alpaca-py`, `pandas`, `numpy`, `python-dotenv` (all present in `strategy-lab` conda env)
+- **Config**: `.env` file with `APCA_API_KEY_ID` and `APCA_API_SECRET_KEY` (paper trading keys)
+- **No existing code modified** — greenfield implementation
+````
+
+## File: openspec/changes/archive/2026-04-19-momentum-m7-strategy/tasks.md
+````markdown
+## 1. Project Structure & Config
+
+- [x] 1.1 Create directory layout: `core/`, `data/`, `risk/`, `strategies/` with `__init__.py` files
+- [x] 1.2 Create `config.py` with M7 symbol list, default parameters (lookback=60, top_n=3, start/end dates), and `.env` loading via `python-dotenv`
+
+## 2. Data Layer (`data/alpaca_data.py`)
+
+- [x] 2.1 Implement `fetch_bars(symbols, start, end, timeframe=TimeFrame.Day)` using `StockHistoricalDataClient`
+- [x] 2.2 Add credential loading from environment variables; raise `EnvironmentError` if missing
+- [x] 2.3 Add log return column (`return = log(close / close.shift(1))`) and drop NaN rows for each symbol
+- [x] 2.4 Raise `ValueError` with descriptive message if any requested symbol returns empty data
+
+## 3. Backtest Engine (`core/backtest_base.py`)
+
+- [x] 3.1 Implement `AlpacaBacktestBase.__init__` with portfolio state: `cash`, `units_held` (dict), `trades`, `equity_curve` (list)
+- [x] 3.2 Implement `place_buy_order(symbol, bar, amount)` with `ftc`/`ptc` cost simulation
+- [x] 3.3 Implement `place_sell_order(symbol, bar, units)` with `ftc`/`ptc` cost simulation
+- [x] 3.4 Implement `get_portfolio_value(bar)` summing cash + mark-to-market value of all holdings
+- [x] 3.5 Implement `close_out(bar)` to liquidate all positions and append final equity curve entry
+- [x] 3.6 Implement `run_backtest()` event loop: iterate bars, detect Friday rebalance, call `on_bar(bar)`, record equity
+
+## 4. Risk Analytics (`risk/metrics.py`)
+
+- [x] 4.1 Implement `sharpe_ratio(equity_curve, periods_per_year=52)` — handle zero-volatility edge case
+- [x] 4.2 Implement `max_drawdown(equity_curve)` — peak-to-trough percentage
+- [x] 4.3 Implement `calmar_ratio(equity_curve, periods_per_year=52)`
+- [x] 4.4 Implement `print_summary(equity_curve)` printing all metrics rounded to 2 decimal places
+- [x] 4.5 Implement `plot_equity_curve(equity_curve, title, save_path=None)` using matplotlib
+
+## 5. Momentum Strategy (`strategies/momentum.py`)
+
+- [x] 5.1 Implement `CrossSectionalMomentum(AlpacaBacktestBase).__init__` accepting all configurable parameters
+- [x] 5.2 Implement `compute_scores(bar)` — N-day simple return for each symbol, return ranked Series
+- [x] 5.3 Implement `on_bar(bar)` — if Friday: call `compute_scores`, select top_n, sell dropped symbols, buy new symbols equal-weight
+- [x] 5.4 Implement `run_backtest()` override calling parent event loop, then `risk.print_summary(self.equity_curve)` and `risk.plot_equity_curve()`
+- [x] 5.5 Verify rebalance-only-on-Friday logic: non-Friday bars must produce no orders
+
+## 6. Entry Point (`run.py`)
+
+- [x] 6.1 Create `run.py` CLI that instantiates `CrossSectionalMomentum` with params from `config.py` and calls `run_backtest()`
+- [x] 6.2 Print backtest configuration summary (symbols, lookback, top_n, date range, initial capital) before running
+
+## 7. Live Trader (`core/live_trader_base.py` + `strategies/momentum.py`)
+
+- [x] 7.1 Implement `AlpacaLiveTraderBase.__init__` with `TradingClient(paper=True)`; raise `ValueError` if `paper=False`
+- [x] 7.2 Implement `get_current_positions()` using `TradingClient.get_all_positions()`
+- [x] 7.3 Implement `submit_order(symbol, side, qty)` using `MarketOrderRequest`; log each submission
+- [x] 7.4 Add `LiveMomentumTrader(AlpacaLiveTraderBase)` with `compute_signal()` using `StockHistoricalDataClient`
+- [x] 7.5 Implement `rebalance()`: fetch latest data → compute signal → diff vs current positions → submit buy/sell orders
+- [x] 7.6 Add market-hours warning when `rebalance()` is called outside NYSE hours
+
+## 8. Validation
+
+- [ ] 8.1 Run backtest over 2019-01-01 to 2024-12-31; confirm equity curve is generated and risk metrics print without error
+- [ ] 8.2 Visually inspect equity curve plot for sanity (no flat lines, no NaN gaps)
+- [ ] 8.3 Run `python run.py` and confirm output includes Sharpe ratio, max drawdown, Calmar ratio
+- [ ] 8.4 Run `LiveMomentumTrader.rebalance()` once against paper account; confirm orders appear in Alpaca paper dashboard
+````
+
+## File: openspec/changes/archive/2026-04-21-moc-execution/specs/live-trader/spec.md
+````markdown
+## MODIFIED Requirements
+
+### Requirement: Submit market orders for target portfolio
+The live trader SHALL submit `MarketOrderRequest` buy and sell orders using `TimeInForce.CLS` (Market-on-Close) so that live execution price matches the closing price assumed by the backtest engine. Orders MUST be submitted while the market is open and before the exchange MOC cutoff (3:50 PM ET / 19:50 UTC).
+
+#### Scenario: Buy order submitted as MOC for new holding
+- **WHEN** symbol S enters the top-N but is not currently held
+- **THEN** a MOC buy order (`time_in_force=TimeInForce.CLS`) for `floor(allocation / current_price)` shares of S is submitted
+
+#### Scenario: Sell order submitted as MOC for dropped holding
+- **WHEN** symbol S was held but no longer in top-N
+- **THEN** a MOC sell order (`time_in_force=TimeInForce.CLS`) for all held shares of S is submitted
+
+#### Scenario: No order for unchanged holdings
+- **WHEN** symbol S is in top-N and already held with approximately correct weight
+- **THEN** no order is submitted for S
+
+### Requirement: Weekly rebalance trigger
+The live trader SHALL expose a `rebalance()` method that executes the full signal → order cycle. The caller SHALL invoke this weekly via cron at `45 19 * * 1` (19:45 UTC, 2:45 PM ET) to ensure MOC orders are submitted before the 19:50 UTC exchange cutoff.
+
+#### Scenario: Rebalance completes with MOC orders
+- **WHEN** `rebalance()` is called on a Monday between market open and 19:50 UTC
+- **THEN** all necessary MOC orders are submitted and confirmed via log output
+
+#### Scenario: Market closed handling
+- **WHEN** `rebalance()` is called outside market hours
+- **THEN** a `RuntimeError` is raised and no orders are submitted
+````
+
+## File: openspec/changes/archive/2026-04-21-moc-execution/.openspec.yaml
+````yaml
+schema: spec-driven
+created: 2026-04-20
+````
+
+## File: openspec/changes/archive/2026-04-21-moc-execution/design.md
+````markdown
+## Context
+
+The live trader currently submits intraday market orders (`TimeInForce.DAY`) at ~10:35 AM ET every Monday. The backtest engine simulates execution at Monday's closing price. This gap means live returns will differ from backtested results even with the same signal.
+
+Additionally, the cron is set to `35 14 * * 1` (14:35 UTC), which is only 5 minutes after open during winter (EST, UTC-5), placing execution in the noisiest window of the trading day.
+
+## Goals / Non-Goals
+
+**Goals:**
+- Align live execution price with the backtest's close-price assumption
+- Eliminate DST sensitivity in the cron timing by switching to a fixed UTC pre-close window
+- Ensure `_warn_if_outside_hours` remains a useful guard under the new timing model
+
+**Non-Goals:**
+- Changing the signal computation (still based on prior close prices)
+- Supporting fractional shares or notional orders
+- Modifying the backtest engine (already correct)
+
+## Decisions
+
+### Decision: Use `TimeInForce.CLS` (MOC orders)
+
+**Chosen**: Change `submit_order` to use `TimeInForce.CLS` in `MarketOrderRequest`.
+
+**Alternatives considered:**
+- `TimeInForce.DAY` at a later time (e.g., 15:30 UTC) — still intraday, still diverges from backtest close price
+- Limit orders at last close price — complicates order management, risk of non-fill
+
+**Rationale**: MOC is the simplest change that closes the backtest/live gap. The execution price *is* the close price, exactly what the backtest models. Alpaca paper trading supports MOC.
+
+### Decision: Cron timing → 19:45 UTC Monday
+
+**Chosen**: `45 19 * * 1` — 2:45 PM ET year-round (19:50 UTC is Alpaca's MOC cutoff; 5-min buffer).
+
+**Rationale**: NYSE MOC cutoff is 3:50 PM ET = 19:50 UTC fixed (no DST shift since NYSE close is always 21:00 UTC). 19:45 UTC gives a 5-minute submission buffer while ensuring the script runs well within the window.
+
+### Decision: Relax `_warn_if_outside_hours` to check only market-open, not time-of-day
+
+**Chosen**: Keep the existing `is_open` check. MOC orders must be submitted while the market is open (after 9:30 AM, before 3:50 PM ET). Alpaca's clock `is_open` flag covers this window naturally — no additional time-of-day logic needed.
+
+**Rationale**: Adding a hardcoded 19:50 UTC ceiling creates a new DST-like fragility. Alpaca's clock is the authoritative source.
+
+## Risks / Trade-offs
+
+- **MOC not accepted on halted stocks** → Alpaca will reject the order; the existing error logging in `submit_order` will capture this. No special handling needed for paper trading.
+- **Script fires after 19:50 UTC** (e.g., cron delay, server lag) → MOC deadline missed, order rejected. Mitigation: 5-minute buffer in cron timing; operator should monitor `output/live_rebalance.log`.
+- **Price slippage at close auction** → MOC fills at the official closing price; any large imbalance in the closing auction could affect fill. Negligible at these quantities vs. M7 daily volume.
+
+## Migration Plan
+
+1. Update `TimeInForce.DAY` → `TimeInForce.CLS` in `live_trader_base.py`
+2. Update crontab on the DigitalOcean droplet: `35 14 * * 1` → `45 19 * * 1`
+3. Update the crontab comment in `weekly_live_rebalance.py` and example in `README.md`
+4. Next Monday: verify orders appear in Alpaca UI as MOC type, confirm fill at closing price
+
+**Rollback**: Revert `TimeInForce.CLS` to `TimeInForce.DAY` and restore crontab. No data migration required.
+
+## Open Questions
+
+None — all decisions resolved in the explore session.
+````
+
+## File: openspec/changes/archive/2026-04-21-moc-execution/proposal.md
+````markdown
+## Why
+
+Live orders execute mid-morning (~10:35 AM ET) using `TimeInForce.DAY`, while the backtest simulates execution at Monday's close price. This backtest/live misalignment means live results will diverge from backtested expectations. Switching to Market-on-Close (MOC) orders aligns live execution with the close price the backtest already assumes, eliminates DST sensitivity in the cron schedule, and reduces intraday slippage noise.
+
+## What Changes
+
+- `core/live_trader_base.py`: Change `TimeInForce.DAY` → `TimeInForce.CLS` in `submit_order`
+- `core/live_trader_base.py`: Update `_warn_if_outside_hours` to also enforce a pre-close submission cutoff (must submit before 3:50 PM ET)
+- `scripts/weekly_live_rebalance.py`: Update crontab comment to reflect new timing
+- `README.md`: Update crontab example from `35 14 * * 1` (14:35 UTC) to `45 19 * * 1` (19:45 UTC, DST-safe)
+
+## Capabilities
+
+### New Capabilities
+
+None.
+
+### Modified Capabilities
+
+- `live-trader`: Order submission now uses MOC (`TimeInForce.CLS`) instead of intraday market orders; `_warn_if_outside_hours` enforces a pre-close cutoff in addition to market-open check.
+
+## Impact
+
+- **`core/live_trader_base.py`**: `submit_order` and `_warn_if_outside_hours` change
+- **`scripts/weekly_live_rebalance.py`**: Comment update only
+- **`README.md`**: Crontab example update
+- **`core/backtest_base.py`**: No changes required — already executes at close
+- **`strategies/momentum.py`**: No changes required
+- **Dependencies**: `alpaca-py` already exposes `TimeInForce.CLS`; no new packages needed
+````
+
+## File: openspec/changes/archive/2026-04-21-moc-execution/tasks.md
+````markdown
+## 1. Live Trader — MOC Order Execution
+
+- [x] 1.1 In `core/live_trader_base.py`, change `time_in_force=TimeInForce.DAY` to `time_in_force=TimeInForce.CLS` in `submit_order`
+
+## 2. Documentation — Crontab Timing
+
+- [x] 2.1 In `scripts/weekly_live_rebalance.py`, update the crontab comment from `35 14 * * 1` (14:35 UTC) to `45 19 * * 1` (19:45 UTC) and update the timing rationale comment
+- [x] 2.2 In `README.md`, update the crontab example from `35 14 * * 1` to `45 19 * * 1` and update the timing explanation
+
+## 3. Verification
+
+- [ ] 3.1 Update the crontab on the DigitalOcean droplet to `45 19 * * 1`
+- [ ] 3.2 On next Monday, verify orders appear in Alpaca UI as MOC type and fill at the official closing price
 ````
 
 ## File: openspec/changes/archive/2026-04-22-ml-pre-earnings-price-prediction/specs/data-layer/spec.md
@@ -1198,6 +2253,1032 @@ None.
 - [x] 5.3 Verify the shifted feature window uses only bars available by T-3 for at least one sampled earnings event
 ````
 
+## File: openspec/changes/archive/2026-04-23-pead-live-multi-symbol/specs/pead-live-trader/spec.md
+````markdown
+## ADDED Requirements
+
+### Requirement: Daily cronjob executes PEAD trading logic
+
+The system SHALL run PEAD live execution as a daily cronjob. At each execution, the system SHALL:
+1. Check each symbol (NXPI, AMD, AVGO) to determine if today is T-3 or T+1+ relative to the symbol's nearest upcoming earnings date
+2. Execute entry orders for any symbol at T-3, provided a positive classifier prediction exists
+3. Execute exit orders for any symbol at T+1 or later, if a position is currently open
+4. Log all order execution results
+
+#### Scenario: Entry trigger on T-3
+- **WHEN** cronjob runs on a day that is T-3 for a symbol's nearest earnings event AND classifier predicts positive (pred_label == 1)
+- **THEN** system SHALL fetch 7-day OHLCV data (T-9 through T-3), place a market BUY order, record entry state with entry_date/entry_price/entry_qty
+
+#### Scenario: Entry skipped on negative prediction
+- **WHEN** cronjob runs on T-3 for a symbol AND classifier predicts negative (pred_label == 0)
+- **THEN** system SHALL not place an order; position entry is skipped for this event
+
+#### Scenario: Exit trigger on T+1 or later
+- **WHEN** cronjob runs on a day that is T+1 or later for a symbol's current open earnings event AND a position is currently open
+- **THEN** system SHALL place a market SELL order at current market price (immediate execution), log exit price and PnL, clear state entry for that symbol
+
+#### Scenario: Double-trade prevention
+- **WHEN** cronjob runs on T-3 for a symbol AND state file already shows an open position for this symbol and the same earnings_date
+- **THEN** system SHALL not place another BUY order; only one entry per symbol per earnings event
+
+#### Scenario: Missed cronjob recovery
+- **WHEN** cronjob does not run on T+1 (e.g., droplet downtime), but runs on T+2 or later AND a position is still open
+- **THEN** system SHALL execute the exit order immediately on the first available execution, preventing positions from lingering past intended exit date
+
+### Requirement: Classifier integration for entry prediction
+
+The system SHALL use a pre-trained, frozen classifier to generate predictions for live trades. For each symbol on T-3:
+1. Load the latest trained classifier (no retraining during live cycle)
+2. Extract 7-day pre-earnings features (T-9 through T-3)
+3. Generate pred_label (0 or 1) and prob_positive probability
+4. Use pred_label to gate entry: only execute if pred_label == 1
+
+#### Scenario: Load classifier
+- **WHEN** daily cronjob initializes
+- **THEN** system SHALL load the most recent trained classifier model
+
+#### Scenario: Predict for T-3 features
+- **WHEN** on T-3 execution and need to decide whether to enter
+- **THEN** system SHALL extract 7-day momentum/volatility/QQQ correlation features, invoke classifier.predict(), receive pred_label and prob_positive
+
+#### Scenario: Entry gated on positive prediction
+- **WHEN** classifier returns pred_label == 1
+- **THEN** entry order proceeds to execution
+
+#### Scenario: Entry blocked on negative prediction
+- **WHEN** classifier returns pred_label == 0
+- **THEN** entry order is not placed; day is recorded as "skipped"
+
+### Requirement: Market order execution with Alpaca API
+
+The system SHALL submit market orders via Alpaca's trading API (paper trading account). For each order:
+1. Calculate position size as `(account_equity * 0.10) / current_price` for entry orders
+2. Submit market order (buy on entry, sell on exit) with time_in_force = Day
+3. Capture order ID, fill price, and fill timestamp
+4. Handle errors (insufficient buying power, API rate limits) by logging and deferring to next cronjob run
+
+#### Scenario: Calculate entry position size
+- **WHEN** entry order is ready to submit
+- **THEN** system SHALL read account equity, multiply by 0.10 (10% position size), divide by T-3 close price to get share count, round down to integer
+
+#### Scenario: Submit entry market order
+- **WHEN** position size is calculated
+- **THEN** system SHALL submit market BUY order via AlpacaLiveTraderBase, capturing order_id and requested fill price
+
+#### Scenario: Submit exit market order
+- **WHEN** T+1+ exit is triggered
+- **THEN** system SHALL submit market SELL order via AlpacaLiveTraderBase for the full open position quantity, capturing order_id and fill price
+
+#### Scenario: Handle Alpaca errors gracefully
+- **WHEN** order submission fails (e.g., API down, insufficient buying power)
+- **THEN** system SHALL log error, not crash, continue to next symbol, retry on next cronjob run
+
+### Requirement: Earnings date fetching and T-N offset calculation
+
+The system SHALL fetch the nearest upcoming earnings date for each symbol using yfinance, then calculate T-3 and T+1 offsets accounting for NYSE trading calendar (exclude weekends, US federal holidays).
+
+#### Scenario: Fetch nearest earnings date
+- **WHEN** cronjob runs
+- **THEN** system SHALL call fetch_earnings_events(symbol) to retrieve the next upcoming earnings date for each symbol (NXPI, AMD, AVGO)
+
+#### Scenario: Calculate T-3 from earnings date
+- **WHEN** earnings_date is known
+- **THEN** system SHALL find the trading day exactly 3 trading days before earnings_date (skip weekends and US holidays), call this T-3
+
+#### Scenario: Calculate T+1 from earnings date
+- **WHEN** earnings_date is known
+- **THEN** system SHALL find the trading day exactly 1 trading day after earnings_date, call this T+1
+
+#### Scenario: Handle holiday edge cases
+- **WHEN** earnings_date or T-3/T+1 calculation crosses a US federal holiday or weekend
+- **THEN** system SHALL skip non-trading days and use NYSE trading calendar to find the correct trading day offset
+
+### Requirement: PnL calculation at exit
+
+The system SHALL calculate and record the profit/loss for each trade at exit time using actual execution prices.
+
+#### Scenario: Calculate net PnL in dollars
+- **WHEN** exit order executes on T+1
+- **THEN** system SHALL compute: pnl_dollars = (exit_price - entry_price) * qty_shares - (2 * 0.001 * position_value) [accounting for entry and exit transaction costs of 0.1% each]
+
+#### Scenario: Calculate PnL percentage
+- **WHEN** exit order executes
+- **THEN** system SHALL compute: pnl_pct = pnl_dollars / (entry_price * qty_shares)
+
+#### Scenario: Record PnL in trade log
+- **WHEN** exit order executes with known entry_price, exit_price, and qty
+- **THEN** system SHALL append pnl_dollars and pnl_pct to the trade log entry
+````
+
+## File: openspec/changes/archive/2026-04-23-pead-live-multi-symbol/specs/pead-state-manager/spec.md
+````markdown
+## ADDED Requirements
+
+### Requirement: State file structure and initialization
+
+The state file (`output/pead_live_state.json`) SHALL be a JSON document tracking current open positions per symbol. Structure: `{symbol: {earnings_date, entry_date, entry_price, entry_qty, created_at}}`. The state file SHALL be initialized as empty on first run or if no positions are open.
+
+#### Scenario: Load state file on startup
+- **WHEN** cronjob starts and state file exists
+- **THEN** system SHALL read and parse the JSON file; if parsing fails, log error and treat as empty state
+
+#### Scenario: Initialize state file if missing
+- **WHEN** state file does not exist
+- **THEN** system SHALL create an empty state file `{}`
+
+#### Scenario: State structure for single open position
+- **WHEN** one symbol has an open position for current earnings event
+- **THEN** state file SHALL contain: `{"NXPI": {"earnings_date": "2026-04-30", "entry_date": "2026-04-27", "entry_price": 125.50, "entry_qty": 80, "created_at": "2026-04-27T16:00:00Z"}}`
+
+#### Scenario: State structure for multiple open positions
+- **WHEN** multiple symbols have open positions simultaneously
+- **THEN** state file SHALL contain entries for each symbol independently: `{"NXPI": {...}, "AMD": {...}, "AVGO": {...}}`
+
+### Requirement: Record new position state on entry
+
+When an entry order executes, the system SHALL write a new state entry with entry details and timestamp.
+
+#### Scenario: Write entry state after buy order
+- **WHEN** entry market order executes on T-3
+- **THEN** system SHALL append/update state entry: `state[symbol] = {earnings_date, entry_date: today, entry_price: filled_price, entry_qty: filled_qty, created_at: timestamp}`
+
+#### Scenario: Entry state persists until exit
+- **WHEN** entry state is recorded and position is held through T+1
+- **THEN** state entry SHALL remain in the state file until exit order executes
+
+### Requirement: Idempotency check before entry
+
+Before placing an entry order, the system SHALL check if a position already exists for this symbol and earnings date, and skip if already present.
+
+#### Scenario: Skip entry if already in state
+- **WHEN** cronjob runs on T-3 AND symbol already exists in state file with the same earnings_date
+- **THEN** system SHALL not place another BUY order; record as "skipped (already entered)"
+
+#### Scenario: Allow entry if earnings event is different
+- **WHEN** cronjob runs on T-3 for earnings event E2 AND symbol exists in state but for a previous earnings event E1
+- **THEN** this would indicate a failed exit (shouldn't happen); log warning and do not enter (state cleanup required manually)
+
+### Requirement: Delete state entry on position exit
+
+After a position exits, the system SHALL delete the corresponding state entry, resetting to clean slate for the next earnings event.
+
+#### Scenario: Delete entry on successful exit
+- **WHEN** exit market order executes on T+1
+- **THEN** system SHALL delete `state[symbol]`, leaving state file clean for next earnings event
+
+#### Scenario: Clean state for future events
+- **WHEN** position is exited and state entry is deleted
+- **THEN** next earnings event for the same symbol can re-enter without interference
+
+### Requirement: Auto-cleanup of stale state entries
+
+The system SHALL automatically remove state entries older than 30 days, in case a position was never exited (e.g., due to manual intervention or error).
+
+#### Scenario: Cleanup entries older than 30 days
+- **WHEN** cronjob runs and detects a state entry with created_at timestamp > 30 days ago
+- **THEN** system SHALL delete that entry, log warning: "Cleaned up stale NXPI position from 2026-03-25"
+
+#### Scenario: Do not cleanup recent entries
+- **WHEN** state entry has created_at < 30 days ago
+- **THEN** entry SHALL remain in the state file
+
+### Requirement: Atomic read-modify-write for state file
+
+State file operations (read, check, update, write) SHALL be performed atomically to prevent corruption or lost updates if multiple cronjobs run simultaneously.
+
+#### Scenario: Atomic entry write
+- **WHEN** placing an entry order
+- **THEN** system SHALL: load state file, check if symbol exists, add/update entry, write atomically (not partial writes)
+
+#### Scenario: Atomic entry delete
+- **WHEN** exiting a position
+- **THEN** system SHALL: load state file, delete symbol entry, write atomically
+
+#### Scenario: Handle concurrent writes
+- **WHEN** two cronjob instances try to update state simultaneously
+- **THEN** system SHALL use file locking or atomic operations to ensure one write completes before the other starts (no corruption)
+
+### Requirement: Human-readable state file format
+
+The state file format SHALL be plain JSON, suitable for manual inspection and debugging.
+
+#### Scenario: State file is readable without special tools
+- **WHEN** cronjob writes state file
+- **THEN** a human can open the file in a text editor and understand the current position(s)
+
+#### Scenario: Pretty-printed JSON for clarity
+- **WHEN** state file is written
+- **THEN** JSON SHALL be formatted with indentation (not minified) for readability
+````
+
+## File: openspec/changes/archive/2026-04-23-pead-live-multi-symbol/specs/pead-trade-logger/spec.md
+````markdown
+## ADDED Requirements
+
+### Requirement: Trade log file structure and initialization
+
+The trade log (`output/pead_live_trades.csv`) SHALL be an append-only CSV file with columns: symbol, earnings_date, entry_date, exit_date, entry_price, exit_price, qty, pnl, pnl_pct, timestamp. The file SHALL be initialized with a header row on first write if it does not exist.
+
+#### Scenario: Initialize trade log with header
+- **WHEN** trade log does not exist and first trade is recorded
+- **THEN** system SHALL create the file with header row: `symbol,earnings_date,entry_date,exit_date,entry_price,exit_price,qty,pnl,pnl_pct,timestamp`
+
+#### Scenario: Load existing trade log
+- **WHEN** trade log already exists
+- **THEN** system SHALL append new trades to the existing file, preserving all previous records
+
+#### Scenario: Trade log structure for single trade
+- **WHEN** one trade completes (entry + exit)
+- **THEN** trade log SHALL contain one row with all fields populated: `NXPI,2026-04-30,2026-04-27,2026-04-28,125.50,128.60,80,240.00,0.0238,2026-04-28T16:00:00Z`
+
+### Requirement: Record trade entry event
+
+When an entry order executes, the system SHALL begin recording trade details (capture symbol, earnings_date, entry_date, entry_price, entry_qty).
+
+#### Scenario: Capture entry details on order execution
+- **WHEN** entry market order executes on T-3
+- **THEN** system SHALL store: symbol, earnings_date, entry_date=today, entry_price=filled_price, qty=filled_qty, entry_timestamp
+
+#### Scenario: Hold entry details until exit
+- **WHEN** entry is recorded and position held through T+1
+- **THEN** entry details SHALL be retained in memory or temporary state, waiting for exit to complete the trade record
+
+### Requirement: Record trade exit and compute PnL
+
+When an exit order executes on T+1+, the system SHALL complete the trade record by adding exit details and computed PnL, then append one row to the trade log CSV.
+
+#### Scenario: Capture exit details on order execution
+- **WHEN** exit market order executes on T+1
+- **THEN** system SHALL capture: exit_date=today, exit_price=filled_price, exit_timestamp
+
+#### Scenario: Compute net PnL with transaction costs
+- **WHEN** exit order executes
+- **THEN** system SHALL compute:
+  - gross_pnl_pct = (exit_price - entry_price) / entry_price
+  - net_pnl_pct = gross_pnl_pct - 0.002 (entry cost 0.1% + exit cost 0.1%)
+  - pnl_dollars = net_pnl_pct * entry_price * qty
+
+#### Scenario: Append completed trade to log
+- **WHEN** all trade details and PnL are computed
+- **THEN** system SHALL append one row to the CSV file: `symbol,earnings_date,entry_date,exit_date,entry_price,exit_price,qty,pnl,pnl_pct,timestamp`
+
+#### Scenario: Trade log records multiple trades chronologically
+- **WHEN** multiple trades complete over time
+- **THEN** trade log SHALL contain multiple rows (one per trade), appended in chronological order of exit timestamp
+
+### Requirement: Append-only semantics for trade log
+
+The trade log SHALL never be modified or overwritten once written. All operations are append-only to maintain audit trail integrity.
+
+#### Scenario: Append new trade without modifying existing records
+- **WHEN** a new trade completes and is logged
+- **THEN** system SHALL append a new row; no existing rows are modified or deleted
+
+#### Scenario: Trade log grows monotonically
+- **WHEN** multiple trades are recorded over weeks/months
+- **THEN** trade log file size increases monotonically; no truncation or reordering
+
+### Requirement: Human-readable trade log format
+
+Trade log format SHALL be plain CSV, easily imported into analysis tools (pandas, Excel, R) for performance analysis and audit.
+
+#### Scenario: Trade log is queryable via pandas
+- **WHEN** analyst reads the trade log
+- **THEN** they can load it in pandas: `pd.read_csv('output/pead_live_trades.csv')` and analyze by symbol, earnings_date, PnL, hit rate, etc.
+
+#### Scenario: Trade log is readable in Excel
+- **WHEN** trade log is opened in Excel or Google Sheets
+- **THEN** columns are labeled clearly and values are formatted for easy interpretation
+
+### Requirement: Timestamp precision for audit trail
+
+Each trade record SHALL include a precise timestamp (ISO 8601 format with seconds precision, UTC) to enable accurate sequencing and audit of events.
+
+#### Scenario: Timestamp on trade exit
+- **WHEN** exit order executes and trade is logged
+- **THEN** timestamp column SHALL contain the exact exit order execution time in ISO 8601 format (e.g., `2026-04-28T16:00:30Z`)
+
+#### Scenario: Timestamp enables event sequencing
+- **WHEN** multiple trades are logged on the same day
+- **THEN** their timestamps enable precise ordering of events
+
+### Requirement: Record skipped entry events (for analysis)
+
+When an entry is skipped due to negative classifier prediction, the system MAY optionally log a "skipped" record for analysis purposes (to compute true false-negative rate).
+
+#### Scenario: Optional logging of skipped entries
+- **WHEN** classifier predicts negative (pred_label == 0) on T-3
+- **THEN** system MAY append a record to the trade log with fields: symbol, earnings_date, entry_date, exit_date=NULL, entry_price=NULL, exit_price=NULL, qty=0, pnl=0, pnl_pct=0, timestamp=T-3_time, plus a note "skipped_pred=0"
+````
+
+## File: openspec/changes/archive/2026-04-23-pead-live-multi-symbol/.openspec.yaml
+````yaml
+schema: spec-driven
+created: 2026-04-22
+````
+
+## File: openspec/changes/archive/2026-04-23-pead-live-multi-symbol/design.md
+````markdown
+## Context
+
+Currently, PEAD backtest is offline—run manually, analyze results after-the-fact. The classifier has been trained and validated on 2016–2025 historical data showing strong alpha in semiconductors (NXPI 92% hit rate, AMD 75%, AVGO 70%). Live execution faces two operational challenges:
+
+1. **Timing precision**: Entry must trigger at T-3 close, exit at T+1 open (or later if cronjob fails). Multiple symbols have non-overlapping earnings dates, so cronjob must check readiness for each symbol daily.
+2. **Idempotency**: Without state tracking, a retry or double-run could place duplicate orders. We need lightweight tracking to answer "did we already trade this event?"
+
+Existing infrastructure available:
+- `AlpacaLiveTraderBase` for Alpaca order submission (paper trading)
+- `fetch_earnings_events()` to get earnings dates from yfinance
+- `fetch_bars()` to get OHLCV data
+- Trained classifier model for predictions
+
+## Goals / Non-Goals
+
+**Goals:**
+- Daily cronjob that checks all three symbols and triggers entry/exit as calendar dates arrive
+- Prevents double-trades for the same symbol/earnings-event pair
+- Market orders for entry (T-3) and exit (T+1+), using current market price for PnL
+- Full audit trail of all trades (entry price, exit price, PnL, timestamp)
+- Clean state after each event (no carryover between earnings events)
+- Graceful handling of missed cronjobs (execute exit on next available T+1+)
+- No manual intervention needed after initial setup
+
+**Non-Goals:**
+- Model retraining during live cycle (separate weekly batch job, out of scope)
+- Real (non-paper) trading
+- Dynamic position sizing based on market conditions
+- Sophisticated exit strategies (profit targets, stop losses)
+- Cross-symbol correlation handling
+- Integration with other strategies
+
+## Decisions
+
+### Decision 1: State Storage → JSON File (not database)
+**Choice**: Single JSON file per symbol (`output/pead_live_state.json`), structured as `{symbol: {earnings_date, entry_date, entry_price, entry_qty, ...}}`.
+
+**Rationale**: 
+- Simple, human-readable, easy to inspect/debug
+- No extra dependencies (sqlite, redis)
+- Small data volume (3 symbols × 1 position each)
+- File-based state survives cronjob restarts naturally
+
+**Alternatives considered**:
+- CSV file: More awkward to merge/update (would need read-modify-write)
+- SQLite: Overkill for 3 symbols + 1 position each
+- Redis: Adds operational complexity (another service)
+
+### Decision 2: State Lifecycle → Delete After Exit
+**Choice**: After exiting a position (T+1 or later), delete the state entry. Next earnings event gets a clean state.
+
+**Rationale**:
+- Simplifies idempotency check: "if symbol in state, position is open"
+- No need to track closed positions in state file (that's what trades log does)
+- Clean slate semantics match trading intent
+
+### Decision 3: Trade Logging → Append-Only CSV
+**Choice**: Single `output/pead_live_trades.csv` with columns: `symbol, earnings_date, entry_date, exit_date, entry_price, exit_price, qty, pnl, pnl_pct, timestamp`.
+
+**Rationale**:
+- Audit trail is immutable and queryable
+- Easy to import into analysis tools (pandas, Excel)
+- Append-only prevents accidental overwrites
+- Decoupled from state (state is ephemeral, log is permanent)
+
+### Decision 4: Order Type → Market Orders for Both Entry/Exit
+**Choice**: Use market orders (vs limit orders) for both T-3 entry and T+1 exit.
+
+**Rationale**:
+- Simplicity: no need to guess fill prices
+- Backtest assumes T-3 close/T+1 open prices (market order aligns with that)
+- Given semicon volatility, slippage on market orders is acceptable cost
+- Live execution will reveal if slippage kills alpha (if so, can switch to limit orders in future)
+
+**Trade-off**: May experience slippage vs theoretical backtest prices. Mitigation: log actual fill prices; compare to backtest assumptions in weekly reviews.
+
+### Decision 5: Exit Timing → `if today >= T+1`
+**Choice**: Exit triggers when `today >= T+1 AND position is open AND earnings_date matches`. Handles missed cronjobs gracefully.
+
+**Rationale**:
+- If droplet was down on T+1, position still exits on next cronjob run
+- Avoids lingering positions past intended exit date
+- Simple to implement (just one inequality check)
+
+### Decision 6: Entry Decision → Frozen Classifier, No Retraining
+**Choice**: Use pre-trained classifier for live predictions. Retraining happens in separate weekly batch job after T+1 closes.
+
+**Rationale**:
+- Live cycle should be stable (no model churn day-to-day)
+- Retraining needs full event data (only available after T+1 close)
+- Weekly cadence (5 earnings events/year × 3 symbols = ~15 events/year) doesn't warrant daily updates
+- Backtest already validated walk-forward performance; retrain weekly to stay current
+
+## Risks / Trade-offs
+
+**[Risk] Alpaca API rate limits or outages** → Mitigation: Catch exceptions, log errors, rely on next cronjob run. No exponential backoff needed for daily cron (single attempt).
+
+**[Risk] Earnings date fetch fails (yfinance down)** → Mitigation: Cache earnings dates in state file; skip day if fetch fails but use last known dates.
+
+**[Risk] State file corruption** → Mitigation: Always back up before write; validate JSON before loading; human-inspectable format aids recovery.
+
+**[Risk] Slippage on market orders reduces alpha** → Mitigation: Log actual fill prices; weekly review will show if live returns match backtest. If not, switch to limit orders.
+
+**[Risk] Model degradation over time** → Mitigation: Weekly retraining job updates model. If performance drops >10%, manual intervention to investigate.
+
+**[Risk] Simultaneous cronjob runs (e.g., manual + scheduled)** → Mitigation: Load/check/write state atomically; OS file locking provides basic protection. For higher safety, add timestamp-based conflict detection.
+
+## Migration Plan
+
+1. **Develop locally** with paper trading on test symbols
+2. **Deploy to DigitalOcean droplet** as new cron job entry
+3. **Monitor first week** of live execution (observe fills, PnL, log quality)
+4. **Verify backtest assumptions**: Compare actual T-3/T+1 fills to historical bar data; check if slippage is acceptable
+5. **Scale to production** once confidence is built
+
+Rollback: Simply disable cron job entry. Existing state file can be inspected/manually cleaned up if needed.
+
+## Open Questions
+
+1. How often does yfinance earnings data refresh? Should we cache and validate?
+2. Should we add Slack/email alerts on entry/exit (for visibility)?
+3. Weekly retraining job: separate script or integrated into cronjob logic?
+````
+
+## File: openspec/changes/archive/2026-04-23-pead-live-multi-symbol/proposal.md
+````markdown
+## Why
+
+Post-Earnings Announcements Drift (PEAD) backtests show strong alpha in semiconductors (NXPI, AMD, AVGO with 70-92% hit rates). The current system only backtests—we need live paper trading execution to validate signals in real market conditions and build operational confidence before deploying real capital.
+
+## What Changes
+
+- **Daily cronjob system** for PEAD multi-symbol live execution (NXPI, AMD, AVGO)
+- **Entry logic** triggers at T-3 (3 days before earnings, using frozen pre-trained classifier)
+- **Exit logic** triggers at T+1 or later (if cronjob missed), exits immediately at market price
+- **State tracking** prevents double-trades for the same symbol/earnings-event combination
+- **Trade logging** captures entry/exit details and PnL for audit trail
+- **Clean-slate design** — after each event closes, position state is reset for next earnings
+- **Robustness** — handles dropped cronjobs gracefully with `today >= T+1` exit condition
+
+## Capabilities
+
+### New Capabilities
+- `pead-live-trader`: Daily cronjob-driven live execution engine; fetches earnings dates, checks T-3/T+1 triggers, places Alpaca market orders, coordinates symbol state
+- `pead-state-manager`: JSON-based state file tracking current positions per symbol (earnings_date, entry_price, entry_qty); prevents double-trades; auto-cleanup after 30 days
+- `pead-trade-logger`: Append-only CSV journal (symbol, earnings_date, entry_date, exit_date, entry_price, exit_price, qty, pnl, pnl_pct, timestamp)
+
+### Modified Capabilities
+- `pead-classifier`: Freeze trained model for live predictions (no retraining during live cycle; separate weekly batch job handles retraining after T+1 closes)
+
+## Impact
+
+- **New files**: `core/pead_live_trader.py`, `scripts/pead_daily_cronjob.py`
+- **Modified files**: `run.py` (add `--mode pead-live` entry point), `config.py` (add PEAD live parameters)
+- **Output artifacts**: `output/pead_live_state.json`, `output/pead_live_trades.csv`
+- **Alpaca integration**: Uses existing `AlpacaLiveTraderBase` for order submission
+- **Dependencies**: None new (uses existing alpaca, pandas, yfinance)
+- **Breaking changes**: None; backtest system unchanged
+````
+
+## File: openspec/changes/archive/2026-04-23-pead-live-multi-symbol/tasks.md
+````markdown
+## 1. State Manager Implementation
+
+- [x] 1.1 Create `core/pead_state_manager.py` with `PEADStateManager` class
+- [x] 1.2 Implement `load_state()` method to read JSON state file with error handling
+- [x] 1.3 Implement `save_state()` method with atomic writes (file locking)
+- [x] 1.4 Implement `add_position(symbol, earnings_date, entry_date, entry_price, entry_qty)` to record new entry
+- [x] 1.5 Implement `remove_position(symbol)` to delete position after exit (clean slate)
+- [x] 1.6 Implement `get_position(symbol)` to check if symbol has open position
+- [x] 1.7 Implement `cleanup_stale_entries(days=30)` to remove entries older than 30 days
+- [x] 1.8 Implement `already_traded(symbol, earnings_date)` idempotency check
+- [x] 1.9 Add comprehensive logging for all state operations
+
+## 2. Trade Logger Implementation
+
+- [x] 2.1 Create `core/pead_trade_logger.py` with `PEADTradeLogger` class
+- [x] 2.2 Implement `initialize_log()` to create CSV header if file doesn't exist
+- [x] 2.3 Implement `log_trade(symbol, earnings_date, entry_date, exit_date, entry_price, exit_price, qty, pnl, pnl_pct)` to append trade row
+- [x] 2.4 Implement PnL computation with transaction cost deduction (0.1% per leg = 0.2% total)
+- [x] 2.5 Implement CSV writing with proper escaping and timestamp formatting (ISO 8601 UTC)
+- [x] 2.6 Implement optional `log_skipped_entry(symbol, earnings_date, entry_date, reason)` for analysis
+- [x] 2.7 Add error handling for file I/O and disk space issues
+
+## 3. Earnings Calendar and T-N Utilities
+
+- [x] 3.1 Create `data/pead_calendar.py` utility module
+- [x] 3.2 Implement `get_trading_dates(start, end)` using NYSE calendar (accounts for holidays/weekends)
+- [x] 3.3 Implement `calculate_offset_trading_date(anchor_date, offset)` to compute T-3, T+1 offsets
+- [x] 3.4 Implement `is_today_entry_date(symbol, earnings_dates_dict)` to check if today is T-3 for any symbol
+- [x] 3.5 Implement `is_today_exit_date(symbol, earnings_dates_dict)` to check if today is T+1+ for any symbol
+- [x] 3.6 Implement `fetch_nearest_earnings(symbol)` wrapper around `fetch_earnings_events()`
+- [x] 3.7 Add caching for earnings dates to avoid repeated yfinance calls within same cronjob execution
+
+## 4. Classifier Integration for Live Predictions
+
+- [x] 4.1 Identify pre-trained classifier model location/format (from backtest)
+- [x] 4.2 Create `strategies/pead_classifier_live.py` wrapper for frozen model
+- [x] 4.3 Implement `load_classifier()` to deserialize trained model
+- [x] 4.4 Implement `predict_entry(features)` to generate pred_label and prob_positive
+- [x] 4.5 Implement feature extraction for 7-day pre-earnings window (reuse from backtest)
+- [x] 4.6 Add logging of classifier predictions for audit trail
+- [x] 4.7 Test that live predictions match backtest predictions on historical data (validation)
+
+## 5. Alpaca Order Execution
+
+- [x] 5.1 Create `strategies/pead_live_trader.py` with `PEADLiveTrader` class extending `AlpacaLiveTraderBase`
+- [x] 5.2 Implement `calculate_position_size(account_equity, entry_price, position_size_pct=0.10)` for entry qty
+- [x] 5.3 Implement `place_entry_order(symbol, qty)` to submit market BUY order via Alpaca
+- [x] 5.4 Implement `place_exit_order(symbol, qty)` to submit market SELL order via Alpaca
+- [x] 5.5 Implement `get_current_price(symbol)` to fetch real-time market price for PnL calculation
+- [x] 5.6 Implement error handling for Alpaca API failures (rate limits, insufficient buying power, API down)
+- [x] 5.7 Implement order result capture (order_id, fill_price, fill_timestamp) from Alpaca responses
+- [x] 5.8 Add detailed logging of all order submissions and fills
+
+## 6. Daily Cronjob Logic
+
+- [x] 6.1 Create `scripts/pead_live_cronjob.py` as the main cronjob entry point
+- [x] 6.2 Implement main loop: `for symbol in [NXPI, AMD, AVGO]:`
+- [x] 6.3 For each symbol:
+  - [x] 6.3.1 Fetch nearest earnings date
+  - [x] 6.3.2 Calculate T-3 and T+1 trading dates
+  - [x] 6.3.3 Check if today == T-3; if yes, execute entry logic
+  - [x] 6.3.4 Check if today >= T+1; if yes, execute exit logic
+- [x] 6.4 Implement entry logic: check prediction, place order, update state, log result
+- [x] 6.5 Implement exit logic: get current price, calculate PnL, place order, update state, log trade
+- [x] 6.6 Implement error handling: catch all exceptions, log, continue to next symbol
+- [x] 6.7 Add summary logging at end of cronjob execution (e.g., "Entry fired for NXPI, exit skipped for AMD, error on AVGO")
+
+## 7. Integration with Existing run.py
+
+- [x] 7.1 Add `--mode pead-live` option to `run.py` argument parser
+- [x] 7.2 Implement `run_pead_live()` function in `run.py`
+- [x] 7.3 Set up logging configuration for pead-live mode (log to file + stdout)
+- [x] 7.4 Call `PEADLiveTrader.run_daily_execution()` or equivalent main function
+- [x] 7.5 Update README.md with usage instructions for `python run.py --mode pead-live`
+
+## 8. Configuration and Parameters
+
+- [x] 8.1 Add PEAD live parameters to `config.py`:
+  - [x] 8.1.1 `PEAD_LIVE_SYMBOLS = ["NXPI", "AMD", "AVGO"]`
+  - [x] 8.1.2 `PEAD_LIVE_POSITION_SIZE = 0.10` (10% of capital)
+  - [x] 8.1.3 `PEAD_LIVE_PTC = 0.001` (0.1% per leg)
+  - [x] 8.1.4 `PEAD_LIVE_STATE_FILE = "output/pead_live_state.json"`
+  - [x] 8.1.5 `PEAD_LIVE_LOG_FILE = "output/pead_live_trades.csv"`
+  - [x] 8.1.6 `PEAD_LIVE_STALE_DAYS = 30`
+- [x] 8.2 Make configuration parameters easily modifiable
+
+## 9. Testing and Validation
+
+- [ ] 9.1 Unit test `PEADStateManager`: load/save, idempotency checks, cleanup
+- [ ] 9.2 Unit test `PEADTradeLogger`: CSV format, PnL calculation, append semantics
+- [ ] 9.3 Unit test `calculate_offset_trading_date()`: T-3, T+1 calculations, holiday handling
+- [ ] 9.4 Unit test classifier prediction wrapper: loads model, returns pred_label/prob
+- [ ] 9.5 Integration test: simulate one full entry/exit cycle (mock Alpaca API)
+- [ ] 9.6 Manual test on paper trading: dry-run with real Alpaca API (no real execution, observe logs)
+- [ ] 9.7 Validate that live predictions match historical backtest on same data
+
+## 10. Documentation and Deployment
+
+- [ ] 10.1 Update README.md with new `--mode pead-live` instructions
+- [ ] 10.2 Document cronjob setup: example crontab entry for daily 8am ET execution
+- [ ] 10.3 Document state file format and manual inspection procedures
+- [ ] 10.4 Document trade log schema and how to analyze results
+- [ ] 10.5 Create deployment checklist for DigitalOcean droplet
+- [ ] 10.6 Add comments to all new modules explaining key design decisions
+- [ ] 10.7 Write runbook for troubleshooting common issues (missed orders, state corruption, etc.)
+
+## 11. Weekly Model Retraining (Separate Job, Lower Priority)
+
+- [ ] 11.1 Design weekly retraining job (runs Sunday evening, retrain on all accumulated T+1 results)
+- [ ] 11.2 Note: This is a separate cronjob entry; scope it for future implementation if needed
+````
+
+## File: openspec/changes/archive/2026-04-24-pead-configurable-entry-offset/specs/data-layer/spec.md
+````markdown
+## MODIFIED Requirements
+
+### Requirement: Fetch daily OHLCV bars for a symbol universe
+The system SHALL fetch historical daily bar data for a list of symbols using alpaca-py `StockHistoricalDataClient`, returning a dict mapping each symbol to a pandas DataFrame with columns: `open`, `high`, `low`, `close`, `volume` indexed by date. The function SHALL accept an optional `symbols` parameter allowing single-symbol fetches (for example `["QQQ"]`) in addition to the existing multi-symbol use case. Date-range behavior SHALL be inclusive of the requested end date for daily bars, and returned OHLCV rows SHALL be preserved even when first-row derived return fields are NaN.
+
+#### Scenario: Successful multi-symbol fetch
+- **WHEN** `fetch_bars(symbols, start, end, timeframe)` is called with a list of valid symbols and a date range
+- **THEN** the function returns a dict where each key is a symbol string and each value is a DataFrame with OHLCV columns indexed by UTC date
+
+#### Scenario: Single-symbol fetch for benchmark
+- **WHEN** `fetch_bars(["QQQ"], start, end)` is called
+- **THEN** the function returns a dict with a single key `"QQQ"` and a valid OHLCV DataFrame
+
+#### Scenario: Inclusive end date for daily bars
+- **WHEN** `fetch_bars(["NXPI"], "2026-04-14", "2026-04-23")` is called and provider data exists for 2026-04-23
+- **THEN** the returned DataFrame includes the 2026-04-23 daily bar
+
+#### Scenario: Symbol with no data in range
+- **WHEN** a symbol is requested but has no data in the given date range
+- **THEN** the function raises a descriptive `ValueError` identifying the missing symbol
+
+#### Scenario: Credentials loaded from .env
+- **WHEN** `fetch_bars()` is called and a `.env` file with valid credentials exists
+- **THEN** the `StockHistoricalDataClient` authenticates successfully and returns data
+
+#### Scenario: Missing credentials
+- **WHEN** `APCA_API_KEY_ID` or `APCA_API_SECRET_KEY` is not set in the environment
+- **THEN** the function raises a `EnvironmentError` before making any API calls
+
+#### Scenario: Returns column present after fetch
+- **WHEN** `fetch_bars()` returns successfully
+- **THEN** each symbol DataFrame contains a `return` column, and OHLCV rows are not dropped solely because first-row `return` is NaN
+````
+
+## File: openspec/changes/archive/2026-04-24-pead-configurable-entry-offset/specs/live-trader/spec.md
+````markdown
+## MODIFIED Requirements
+
+### Requirement: Weekly rebalance trigger
+The PEAD live execution flow SHALL evaluate entry for each symbol using configurable entry offset `PEAD_ENTRY_OFFSET_DAYS`, where entry date is `T-E` and required feature bars are available by `T-(E+1)` close. The system SHALL NOT attempt entry prediction when the required anchor bar is not yet available, and SHALL log an explicit skip reason.
+
+#### Scenario: Entry evaluated with available anchor bars
+- **WHEN** live execution runs for symbol S and all bars through `T-(E+1)` are available
+- **THEN** prediction is computed and entry order logic is evaluated for date `T-E`
+
+#### Scenario: Entry skipped when anchor bar unavailable
+- **WHEN** live execution runs before the required anchor bar has finalized for symbol S
+- **THEN** no prediction or order is attempted for that symbol and logs record `missing feature-anchor bar`
+
+#### Scenario: Existing order safety behavior preserved
+- **WHEN** live execution runs outside supported order timing or data preconditions
+- **THEN** no new entry order is submitted
+````
+
+## File: openspec/changes/archive/2026-04-24-pead-configurable-entry-offset/specs/pead-backtest/spec.md
+````markdown
+## MODIFIED Requirements
+
+### Requirement: Event-driven backtest simulating overnight entry at T-1 close
+The PEAD backtest SHALL support a configurable entry offset `PEAD_ENTRY_OFFSET_DAYS` and SHALL enter a long position at `open(T-E)` for each event where `pred_label == 1`, where E is the configured entry offset. The backtest SHALL exit at either T+1 open or T+1 close according to configured exit mode. Each trade is independent; no portfolio is held between events.
+
+#### Scenario: Trade entered at T-3 open
+- **WHEN** `pred_label == 1` and `PEAD_ENTRY_OFFSET_DAYS=3`
+- **THEN** a long entry is recorded at `open(T-3)` with configured position size as a fraction of capital
+
+#### Scenario: Trade exited at T+1 open
+- **WHEN** a trade is open and the configured exit mode is `t_plus_1_open`
+- **THEN** the position is closed at `open(T+1)` and PnL is recorded from `open(T-E)` to `open(T+1)`
+
+#### Scenario: Trade exited at T+1 close
+- **WHEN** a trade is open and the configured exit mode is `t_plus_1_close`
+- **THEN** the position is closed at `close(T+1)` and PnL is recorded from `open(T-E)` to `close(T+1)`
+
+#### Scenario: No trade on predicted-negative event
+- **WHEN** `pred_label == 0` for an event
+- **THEN** no entry or exit is simulated and capital is unchanged
+
+### Requirement: Invocable via `python run.py --mode pead-backtest`
+The main entry point SHALL support `--mode pead-backtest` as the PEAD timing-variant runner that executes the full pipeline: fetch earnings events -> fetch bars -> build features using bars available by `T-(E+1)` where E is `PEAD_ENTRY_OFFSET_DAYS` -> walk-forward predict -> backtest the configured entry/exit horizon -> print summary.
+
+#### Scenario: pead-backtest mode runs end to end
+- **WHEN** `python run.py --mode pead-backtest` is invoked
+- **THEN** the full configured timing-variant pipeline completes without error and prints a PEAD risk summary
+
+#### Scenario: Existing non-PEAD modes unaffected
+- **WHEN** `python run.py --mode backtest` or `--mode live` is invoked
+- **THEN** behavior is identical to before this change
+````
+
+## File: openspec/changes/archive/2026-04-24-pead-configurable-entry-offset/specs/pead-entry-timing-config/spec.md
+````markdown
+## ADDED Requirements
+
+### Requirement: Configurable PEAD entry offset for backtest and live execution
+The system SHALL expose a configuration parameter `PEAD_ENTRY_OFFSET_DAYS` representing the entry day offset in trading days before earnings day T. The value MUST be a positive integer and SHALL be interpreted consistently by backtest and live code paths.
+
+#### Scenario: Valid offset accepted
+- **WHEN** `PEAD_ENTRY_OFFSET_DAYS=3` is configured
+- **THEN** both backtest and live logic treat entry day as T-3
+
+#### Scenario: Invalid offset rejected
+- **WHEN** `PEAD_ENTRY_OFFSET_DAYS` is set to 0, a negative number, or a non-integer value
+- **THEN** the system raises a configuration validation error before any trading or backtest execution begins
+
+### Requirement: Derived feature anchor from configured entry offset
+For an entry offset E, the feature window anchor SHALL be T-(E+1), and the 7-day feature window SHALL cover the 7 trading days ending at that anchor date (inclusive).
+
+#### Scenario: T-3 open entry derives T-4 anchor
+- **WHEN** `PEAD_ENTRY_OFFSET_DAYS=3`
+- **THEN** feature anchor is T-4 and the feature window is T-10 through T-4
+
+#### Scenario: T-5 open entry derives T-6 anchor
+- **WHEN** `PEAD_ENTRY_OFFSET_DAYS=5`
+- **THEN** feature anchor is T-6 and the feature window is the 7 trading days ending at T-6
+
+### Requirement: Runtime visibility of effective timing configuration
+The system SHALL log the effective entry offset, derived feature anchor offset, and resolved entry/exit dates for each run.
+
+#### Scenario: Effective timing is logged
+- **WHEN** a PEAD backtest or live run starts
+- **THEN** logs include `entry_offset_days`, `feature_anchor_offset_days`, and configured exit mode
+````
+
+## File: openspec/changes/archive/2026-04-24-pead-configurable-entry-offset/specs/pre-earnings-features/spec.md
+````markdown
+## MODIFIED Requirements
+
+### Requirement: Build a feature vector per earnings event from T-7 to T-1 daily bars
+The feature module SHALL produce a single feature vector per earnings event by computing summary statistics over a 7-trading-day window ending at a configurable feature anchor derived from `PEAD_ENTRY_OFFSET_DAYS`. For entry offset E, the feature anchor MUST be T-(E+1), and all features MUST use only data available by the anchor close with no forward-looking fields relative to the entry decision time.
+
+#### Scenario: Feature vector produced for each event
+- **WHEN** `build_features(events_df, bars_dict, entry_offset_days=3)` is called with a valid events DataFrame and OHLCV bar data
+- **THEN** the function returns a DataFrame with one row per event and one column per feature, indexed by `earnings_date`
+
+#### Scenario: No forward-looking data used
+- **WHEN** features are computed for an event with earnings date T and entry offset E
+- **THEN** no bar after T-(E+1) appears in the feature computation window
+
+### Requirement: Price drift features (T-7 to T-1)
+The module SHALL compute the following price drift features over the 7-day pre-earnings window ending at the derived anchor date T-(E+1):
+
+- `drift_7d`: Cumulative simple return from the first close in the window to the anchor close.
+- `drift_slope`: Ordinary-least-squares slope of daily closes over the window, normalized by the mean close.
+- `up_day_count`: Number of days where `close > close.shift(1)` in the window.
+- `down_day_count`: Number of days where `close < close.shift(1)` in the window.
+
+#### Scenario: Drift computed correctly
+- **WHEN** close prices over the 7-day window ending at T-(E+1) increase monotonically
+- **THEN** `drift_7d` is positive, `up_day_count` equals 6, and `down_day_count` equals 0
+
+#### Scenario: Slope captures convexity
+- **WHEN** closes accelerate upward over the window ending at T-(E+1)
+- **THEN** `drift_slope` is positive and larger than for a linear price path with the same total drift
+
+### Requirement: Volume pressure features (T-7 to T-1)
+The module SHALL compute:
+
+- `rel_volume_mean`: Mean daily volume over the window ending at T-(E+1) divided by the symbol's 20-day baseline volume computed from the 20 trading days ending immediately before the feature window begins.
+- `down_volume_ratio`: Sum of volume on down days divided by total window volume.
+
+#### Scenario: Volume baseline uses non-overlapping window
+- **WHEN** baseline volume is computed for an event
+- **THEN** no bar from the 7-day feature window ending at T-(E+1) is included in the 20-day baseline
+
+#### Scenario: Down-volume ratio reflects selling pressure
+- **WHEN** all volume in the window occurs on down days
+- **THEN** `down_volume_ratio` equals 1.0
+
+### Requirement: Volatility regime features (T-7 to T-1)
+The module SHALL compute:
+
+- `atr_ratio`: Mean of `(high - low)` over the window ending at T-(E+1) divided by the mean of `(high - low)` for the 20-day baseline period immediately preceding the feature window.
+- `gap_count`: Number of overnight gaps (`abs(open - prev_close) / prev_close > 0.005`) within the window.
+
+#### Scenario: ATR expansion detected
+- **WHEN** intraday ranges expand significantly in the 7-day window ending at T-(E+1) relative to the prior 20-day baseline
+- **THEN** `atr_ratio` is greater than 1.0
+
+### Requirement: Relative-to-market features (T-7 to T-1)
+The module SHALL compute:
+
+- `rel_drift_vs_qqq`: `drift_7d` (symbol) minus the QQQ cumulative return over the same 7-day window ending at T-(E+1), using QQQ bars passed in `bars_dict`.
+
+#### Scenario: Outperformance detected
+- **WHEN** the symbol rises 5% and QQQ rises 2% over the same window ending at T-(E+1)
+- **THEN** `rel_drift_vs_qqq` equals approximately 0.03
+
+### Requirement: Target label computation
+The module SHALL compute the binary target label alongside features:
+
+- `y`: 1 if `open(T) / close(T-1) - 1 > 0.0`, else 0.
+- `gap_return`: Continuous gap return `open(T) / close(T-1) - 1` (stored for evaluation, not used as training label).
+
+#### Scenario: Positive gap labeled correctly
+- **WHEN** T open is higher than T-1 close
+- **THEN** `y = 1` and `gap_return > 0`
+
+#### Scenario: No-gap or negative gap labeled correctly
+- **WHEN** T open equals or is below T-1 close
+- **THEN** `y = 0` and `gap_return <= 0`
+
+### Requirement: Drop events with insufficient bar history
+The module SHALL exclude any event where fewer than 7 valid bars exist in the feature window ending at T-(E+1), and log a warning per dropped event.
+
+#### Scenario: Event dropped on insufficient history
+- **WHEN** only 4 bars are available in the feature window ending at T-(E+1) for an event
+- **THEN** that event is excluded from the output and a warning is logged
+````
+
+## File: openspec/changes/archive/2026-04-24-pead-configurable-entry-offset/.openspec.yaml
+````yaml
+schema: spec-driven
+created: 2026-04-23
+````
+
+## File: openspec/changes/archive/2026-04-24-pead-configurable-entry-offset/design.md
+````markdown
+## Context
+
+The PEAD system currently mixes a fixed T-3 entry concept with daily-bar availability constraints. In live mode, when the job runs before a T-3 daily bar is finalized, feature generation can fail because the required anchor bar is absent. This surfaced as event drops for near-term earnings symbols.
+
+The user wants two things:
+1. A coherent timing model for T-3 open entry, which implies features must stop at T-4 close (window T-10..T-4).
+2. Configurable entry offsets so strategy variants (T-4, T-5, etc.) can be tested without code rewrites.
+
+This change introduces one timing contract used by both backtest and live: entry offset is configurable, and feature window is derived from offset deterministically.
+
+## Goals / Non-Goals
+
+**Goals:**
+- Define a single timing model shared by backtest and live PEAD flows.
+- Support configurable entry offsets through config, with offset-specific feature windows.
+- Eliminate impossible decision timing (for example requiring a bar that does not exist yet at decision time).
+- Preserve classifier pipeline compatibility by keeping feature names stable while changing date anchoring.
+- Make runtime behavior explicit in logs and docs.
+
+**Non-Goals:**
+- Re-architecting the model family or introducing a new model type.
+- Introducing intraday minute-bar feature engineering in this change.
+- Implementing full hyperparameter/offset grid optimization tooling.
+
+## Decisions
+
+1. Decision: Introduce config-driven entry offset as the source of truth.
+- Choice: Add PEAD entry offset config values and propagate through feature builder, backtest, and live execution.
+- Why: Hardcoded timing creates fragile behavior and blocks strategy iteration.
+- Alternative considered: Keep fixed T-3 and add ad-hoc exceptions in live mode.
+- Why rejected: Preserves incoherent semantics and accumulates timing bugs.
+
+2. Decision: Define feature window relative to entry offset, not fixed named dates.
+- Choice: For entry offset E (positive integer days before earnings), feature window is 7 trading days ending at E+1 (for T-3 open, end at T-4; window T-10..T-4).
+- Why: Guarantees every feature bar is known before entry execution.
+- Alternative considered: Keep T-3 feature anchor and delay decisions until next day.
+- Why rejected: Violates intended entry timing and produces post-hoc decisions.
+
+3. Decision: Use open-entry semantics in backtest/live for offset-driven entry day.
+- Choice: Entry execution uses entry-day open price, with exit mode remaining configurable (T+1 open/close).
+- Why: Aligns with user intent for "decide at T-3 open" and avoids requiring same-day close data.
+- Alternative considered: Entry-at-close semantics with post-close trigger.
+- Why rejected: Contradicts requested timing variant and daytime cron usage.
+
+4. Decision: Keep data-layer daily fetch inclusive and avoid dropping first bar in requested range.
+- Choice: Maintain inclusive end-date fetch and preserve OHLCV rows even if return is NaN on first row.
+- Why: Offset-derived windows require precise boundaries; dropping a boundary bar causes false "missing bar" failures.
+- Alternative considered: Compute returns externally and keep current drop behavior.
+- Why rejected: Unnecessary complexity and repeated edge-case handling downstream.
+
+## Risks / Trade-offs
+
+- [Risk] Timing model changes alter historical backtest performance and comparability with archived results.
+  -> Mitigation: Log entry offset and derived window dates for each run; document baseline shift in README.
+
+- [Risk] Offset generalization can introduce off-by-one errors around holidays.
+  -> Mitigation: Centralize offset date derivation in `data/pead_calendar.py` and add unit tests for known holiday weeks.
+
+- [Risk] Existing trained models may degrade if retrained under new timing semantics.
+  -> Mitigation: Keep model artifact versioning and include a retrain step in tasks after timing migration.
+
+- [Risk] Different data plans (IEX/SIP limits) can still cause missing-recent-bar errors.
+  -> Mitigation: Keep descriptive logging and explicit skip reasons; document required market-data subscription behavior.
+````
+
+## File: openspec/changes/archive/2026-04-24-pead-configurable-entry-offset/proposal.md
+````markdown
+## Why
+
+The current PEAD live path fails on entry day because the decision timing and available bar data are inconsistent: we trigger on T-3 while the model expects a fully available T-3 daily bar. This creates impossible behavior ("decide T-3" only after T-3 has passed) and causes dropped events in live runs.
+
+We also need entry timing to be strategy-configurable instead of hardcoded so we can test and compare variants (for example T-3 open, T-4 open, T-5 open) without rewriting feature logic and backtest/live orchestration each time.
+
+## What Changes
+
+- Add configurable PEAD entry timing via config (`PEAD_ENTRY_OFFSET_DAYS`) and derive the feature window from that offset.
+- Redefine default live/backtest semantics to support T-3 open entry by using only bars available by T-4 close (feature window T-10..T-4).
+- Generalize feature engineering to compute windows from `entry_offset_days` (not fixed T-3 assumptions).
+- Update backtest entry/exit pricing logic to use configurable entry anchor and keep configurable exit mode.
+- Update live cronjob trigger logic to evaluate entry on entry-day open semantics and avoid impossible "predict after the fact" paths.
+- Update logging and docs to print the configured entry/feature window so runtime behavior is explicit.
+
+## Capabilities
+
+### New Capabilities
+- `pead-entry-timing-config`: Config-driven PEAD entry timing and derived feature window rules shared by backtest and live execution.
+
+### Modified Capabilities
+- `pre-earnings-features`: Requirement changes from fixed T-3 feature anchoring to offset-driven window generation.
+- `pead-backtest`: Requirement changes from fixed T-3 close entry to configurable entry offset with open-entry semantics.
+- `live-trader`: Requirement changes to ensure PEAD live entry decisions align with data actually available at decision time.
+- `data-layer`: Requirement changes to enforce inclusive date windows for daily bars used in offset-derived feature windows.
+
+## Impact
+
+- Affected code:
+  - `config.py`
+  - `data/pre_earnings_features.py`
+  - `data/pead_calendar.py`
+  - `data/alpaca_data.py`
+  - `strategies/pead_backtest.py`
+  - `scripts/pead_live_cronjob.py`
+  - `run.py`
+- New/updated OpenSpec files under this change for one new capability and multiple modified capabilities.
+- Backtest outputs will change because entry/feature timing changes.
+- README and runbook sections for PEAD timing must be updated to describe configurable entry offsets.
+````
+
+## File: openspec/changes/archive/2026-04-24-pead-configurable-entry-offset/tasks.md
+````markdown
+## 1. Configuration and Timing Contract
+
+- [x] 1.1 Add `PEAD_ENTRY_OFFSET_DAYS` validation (positive integer) in `config.py`
+- [x] 1.2 Add helper(s) in `data/pead_calendar.py` to derive entry day `T-E` and feature anchor day `T-(E+1)`
+- [x] 1.3 Update run/startup logging to print effective timing config (`entry_offset_days`, anchor offset, exit mode)
+
+## 2. Data-Layer Boundary Fixes
+
+- [x] 2.1 Ensure `data.alpaca_data.fetch_bars()` treats daily end date as inclusive
+- [x] 2.2 Preserve OHLCV rows when first-row `return` is NaN (no blanket drop on return NaN)
+- [x] 2.3 Add/adjust tests for inclusive end-date behavior and row preservation
+
+## 3. Feature Engineering Generalization
+
+- [x] 3.1 Update `build_features()` to accept `entry_offset_days` and derive anchor date from it
+- [x] 3.2 Shift default T-3-open semantics to feature window `T-10..T-4` when `entry_offset_days=3`
+- [x] 3.3 Keep feature column schema unchanged while using offset-derived windows
+- [x] 3.4 Update warnings/errors to report missing bars in terms of derived anchor dates
+- [x] 3.5 Add unit tests for offset variants (T-3, T-4, T-5) and no-lookahead guarantees
+
+## 4. Backtest Timing Migration
+
+- [x] 4.1 Update PEAD backtest entry pricing to use `open(T-E)` instead of fixed `close(T-3)`
+- [x] 4.2 Keep exit modes (`t_plus_1_open`, `t_plus_1_close`) and ensure PnL uses new entry price basis
+- [x] 4.3 Update event filtering to skip when `T-E`, `T-(E+1)`, or exit bars are unavailable
+- [x] 4.4 Update backtest reporting to include configured entry offset and derived timing window
+
+## 5. Live Cronjob Timing Migration
+
+- [x] 5.1 Replace hardcoded T-3 checks in `scripts/pead_live_cronjob.py` with `PEAD_ENTRY_OFFSET_DAYS`
+- [x] 5.2 Only build prediction features when bars through `T-(E+1)` are available
+- [x] 5.3 For `entry_offset_days=3`, ensure live logic reflects T-3-open semantics using `T-10..T-4` features
+- [x] 5.4 Keep idempotency/state handling correct under configurable entry offset
+- [x] 5.5 Improve skip logging to distinguish timing-unavailable vs. true data-missing cases
+
+## 6. End-to-End Validation
+
+- [x] 6.1 Run `python run.py --mode pead-backtest` with `PEAD_ENTRY_OFFSET_DAYS=3` and confirm end-to-end success
+- [x] 6.2 Run backtest with at least one alternate offset (for example 4 or 5) and confirm logic remains valid
+- [x] 6.3 Run `python run.py --mode pead-live` in paper mode and verify no impossible post-hoc prediction behavior
+- [x] 6.4 Confirm live logs clearly show effective timing configuration and entry/skip reasons per symbol
+
+## 7. Documentation
+
+- [x] 7.1 Update README PEAD section with entry-offset configuration and timing semantics
+- [x] 7.2 Document how to test alternate entry offsets (T-3, T-4, T-5) safely
+- [x] 7.3 Document migration note that prior backtest results are not directly comparable after timing change
+````
+
+## File: openspec/specs/backtest-engine/spec.md
+````markdown
+## ADDED Requirements
+
+### Requirement: Event-driven iteration over time bars
+The backtest engine SHALL iterate over each time bar in chronological order, evaluating strategy signals and simulating order execution at each bar.
+
+#### Scenario: Bar-by-bar event loop
+- **WHEN** `run_backtest()` is called
+- **THEN** the engine processes each bar from index `lookback` to `len(data)-1` in order, calling `on_bar(bar)` exactly once per bar
+
+### Requirement: Simulated order execution with transaction costs
+The engine SHALL simulate buy and sell orders using the closing price at the signal bar, applying configurable fixed transaction cost (`ftc`) and proportional transaction cost (`ptc`).
+
+#### Scenario: Buy order reduces cash balance
+- **WHEN** a buy order is placed for N units at price P with ptc=0.001 and ftc=0
+- **THEN** cash decreases by `N * P * (1 + ptc) + ftc`
+
+#### Scenario: Sell order increases cash balance
+- **WHEN** a sell order is placed for N units at price P with ptc=0.001 and ftc=0
+- **THEN** cash increases by `N * P * (1 - ptc) - ftc`
+
+### Requirement: Multi-symbol portfolio state tracking
+The engine SHALL maintain portfolio state across multiple symbols: cash balance, units held per symbol, and current position per symbol.
+
+#### Scenario: Portfolio state initialized correctly
+- **WHEN** a backtest is instantiated with `initial_amount=10000`
+- **THEN** cash equals 10000, units_held is an empty dict, and all positions are neutral (0)
+
+#### Scenario: Portfolio state updated after trade
+- **WHEN** a buy order is executed for symbol S
+- **THEN** `units_held[S]` reflects the purchased units and cash reflects the deducted amount
+
+### Requirement: Equity curve recorded at each rebalance
+The engine SHALL record total portfolio value (cash + mark-to-market holdings) at each rebalance event, producing an equity curve as a pandas Series indexed by date.
+
+#### Scenario: Equity curve length matches rebalance count
+- **WHEN** backtest runs over a period with W weekly rebalances
+- **THEN** the equity curve has exactly W+1 entries (including initial value)
+
+### Requirement: Final close-out and summary
+The engine SHALL close all open positions at the last bar and print a summary: final balance, net performance (%), number of trades, and call `calculate_risk_metrics()`.
+
+#### Scenario: Close-out at end of backtest
+- **WHEN** the event loop reaches the final bar
+- **THEN** all positions are liquidated at the last closing price and the final cash balance reflects all proceeds
+````
+
 ## File: openspec/specs/earnings-calendar/spec.md
 ````markdown
 ## ADDED Requirements
@@ -1325,1185 +3406,6 @@ The module SHALL log sorted feature coefficients (by absolute magnitude) after f
 - **THEN** feature names ranked by absolute coefficient magnitude are logged in descending order
 ````
 
-## File: openspec/specs/pead-backtest/spec.md
-````markdown
-## ADDED Requirements
-
-### Requirement: Event-driven backtest simulating overnight entry at T-1 close
-The PEAD backtest SHALL support a configurable timing variant that enters a long position at T-3 close and exits at either T+1 open or T+1 close for each event where `pred_label == 1`. Each trade is independent; no portfolio is held between events.
-
-#### Scenario: Trade entered at T-3 close
-- **WHEN** `pred_label == 1` for an event and the configured entry timing is T-3 close
-- **THEN** a long entry is recorded at `close(T-3)` with configured position size as a fraction of capital
-
-#### Scenario: Trade exited at T+1 open
-- **WHEN** a trade is open and the configured exit mode is `t_plus_1_open`
-- **THEN** the position is closed at `open(T+1)` and PnL is recorded from `close(T-3)` to `open(T+1)`
-
-#### Scenario: Trade exited at T+1 close
-- **WHEN** a trade is open and the configured exit mode is `t_plus_1_close`
-- **THEN** the position is closed at `close(T+1)` and PnL is recorded from `close(T-3)` to `close(T+1)`
-
-#### Scenario: No trade on predicted-negative event
-- **WHEN** `pred_label == 0` for an event
-- **THEN** no entry or exit is simulated and capital is unchanged
-
-### Requirement: Configurable position sizing as fixed fraction of capital
-The backtest SHALL support a `position_size` parameter (float, fraction of current capital, e.g. 0.05 for 5%) applied to each trade independently. Capital starts at `initial_amount`.
-
-#### Scenario: Position size applied to current capital
-- **WHEN** capital is $10,000 and `position_size=0.05`
-- **THEN** each trade risks $500 of capital
-
-### Requirement: Transaction cost applied to each leg
-The backtest SHALL apply a configurable proportional transaction cost (`ptc`) to both the entry and exit leg of each trade.
-
-#### Scenario: Transaction costs reduce PnL
-- **WHEN** `ptc=0.001` (0.1%)
-- **THEN** net trade return equals `(open(T) / close(T-1) - 1) - 2 * ptc`
-
-### Requirement: Always-buy benchmark metrics for the configured PEAD horizon
-The PEAD backtest flow SHALL compute and report benchmark metrics for an always-buy strategy that trades every evaluated PEAD event using the same entry date, exit date, and transaction cost assumptions as the model-gated strategy.
-
-#### Scenario: Benchmark uses same evaluated events
-- **WHEN** benchmark metrics are computed
-- **THEN** the always-buy baseline uses the same evaluated event subset as the model-gated PEAD backtest
-
-#### Scenario: Benchmark reports average return and hit rate
-- **WHEN** the PEAD timing-variant run completes
-- **THEN** the output includes always-buy hit rate, average gross return, average net return, and uplift versus the model-gated strategy for the configured horizon
-
-#### Scenario: Benchmark uses same transaction cost assumptions
-- **WHEN** `ptc` is configured for the PEAD timing-variant run
-- **THEN** the always-buy benchmark applies the same per-leg transaction cost assumptions as the model-gated strategy
-
-### Requirement: Equity curve and per-trade record
-The backtest SHALL produce:
-- An equity curve: capital value after each event (trade or no trade), indexed by `earnings_date`.
-- A per-trade record DataFrame with columns: `earnings_date`, `entry_price`, `exit_price`, `gross_return`, `net_return`, `pred_prob`, `y`.
-
-#### Scenario: Equity curve length equals number of evaluated events
-- **WHEN** backtest runs over N events
-- **THEN** the equity curve has exactly N+1 entries (initial value plus one per event)
-
-#### Scenario: Per-trade record only contains traded events
-- **WHEN** backtest completes
-- **THEN** the per-trade DataFrame contains only rows where `pred_label == 1`
-
-### Requirement: Risk summary consistent with existing risk.metrics module
-The backtest SHALL call `risk.print_summary(equity_curve)` after completion to produce Sharpe ratio, max drawdown, Calmar ratio, and total return using the existing module.
-
-#### Scenario: Risk summary printed after backtest
-- **WHEN** `PEADBacktest.run()` completes
-- **THEN** `risk.print_summary` is called with the equity curve and prints all metrics
-
-### Requirement: Invocable via `python run.py --mode pead-backtest`
-The main entry point SHALL support `--mode pead-backtest` as the PEAD timing-variant runner that executes the full pipeline: fetch earnings events → fetch bars → build features using data available by T-3 → walk-forward predict → backtest the configured entry/exit horizon → print summary.
-
-#### Scenario: pead-backtest mode runs end to end
-- **WHEN** `python run.py --mode pead-backtest` is invoked
-- **THEN** the full configured timing-variant pipeline completes without error and prints a PEAD risk summary
-
-#### Scenario: Existing non-PEAD modes unaffected
-- **WHEN** `python run.py --mode backtest` or `--mode live` is invoked
-- **THEN** behavior is identical to before this change
-````
-
-## File: openspec/specs/pre-earnings-features/spec.md
-````markdown
-## ADDED Requirements
-
-### Requirement: Build a feature vector per earnings event from T-7 to T-1 daily bars
-The feature module SHALL produce a single feature vector per earnings event by computing summary statistics over the 7 trading days ending at T-3 close (inclusive). All features MUST use only data available at T-3 close with no forward-looking fields relative to the T-3 entry decision time.
-
-#### Scenario: Feature vector produced for each event
-- **WHEN** `build_features(events_df, bars_dict)` is called with a valid events DataFrame and OHLCV bar data
-- **THEN** the function returns a DataFrame with one row per event and one column per feature, indexed by `earnings_date`
-
-#### Scenario: No forward-looking data used
-- **WHEN** features are computed for an event with earnings date T and entry decision time T-3 close
-- **THEN** no bar after T-3 appears in the feature computation window
-
-### Requirement: Price drift features (T-7 to T-1)
-The module SHALL compute the following price drift features over the 7-day pre-earnings window ending at T-3:
-
-- `drift_7d`: Cumulative simple return from close(T-9) to close(T-3).
-- `drift_slope`: Ordinary-least-squares slope of daily closes over the window, normalized by the mean close.
-- `up_day_count`: Number of days where `close > close.shift(1)` in the window.
-- `down_day_count`: Number of days where `close < close.shift(1)` in the window.
-
-#### Scenario: Drift computed correctly
-- **WHEN** close prices over the 7-day window ending at T-3 increase monotonically
-- **THEN** `drift_7d` is positive, `up_day_count` equals 6, and `down_day_count` equals 0
-
-#### Scenario: Slope captures convexity
-- **WHEN** closes accelerate upward over the window ending at T-3
-- **THEN** `drift_slope` is positive and larger than for a linear price path with the same total drift
-
-### Requirement: Volume pressure features (T-7 to T-1)
-The module SHALL compute:
-
-- `rel_volume_mean`: Mean daily volume over the window ending at T-3 divided by the symbol's 20-day baseline volume computed from the 20 trading days ending immediately before the feature window begins.
-- `down_volume_ratio`: Sum of volume on down days divided by total window volume.
-
-#### Scenario: Volume baseline uses non-overlapping window
-- **WHEN** baseline volume is computed for an event
-- **THEN** no bar from the 7-day feature window ending at T-3 is included in the 20-day baseline
-
-#### Scenario: Down-volume ratio reflects selling pressure
-- **WHEN** all volume in the window occurs on down days
-- **THEN** `down_volume_ratio` equals 1.0
-
-### Requirement: Volatility regime features (T-7 to T-1)
-The module SHALL compute:
-
-- `atr_ratio`: Mean of `(high - low)` over the window ending at T-3 divided by the mean of `(high - low)` for the 20-day baseline period immediately preceding the feature window.
-- `gap_count`: Number of overnight gaps (`abs(open - prev_close) / prev_close > 0.005`) within the window.
-
-#### Scenario: ATR expansion detected
-- **WHEN** intraday ranges expand significantly in the 7-day window ending at T-3 relative to the prior 20-day baseline
-- **THEN** `atr_ratio` is greater than 1.0
-
-### Requirement: Relative-to-market features (T-7 to T-1)
-The module SHALL compute:
-
-- `rel_drift_vs_qqq`: `drift_7d` (symbol) minus the QQQ cumulative return over the same 7-day window ending at T-3, using QQQ bars passed in `bars_dict`.
-
-#### Scenario: Outperformance detected
-- **WHEN** GOOGL rises 5% and QQQ rises 2% over the same window ending at T-3
-- **THEN** `rel_drift_vs_qqq` equals approximately 0.03
-
-### Requirement: Target label computation
-The module SHALL compute the binary target label alongside features:
-
-- `y`: 1 if `open(T) / close(T-1) - 1 > 0.0`, else 0.
-- `gap_return`: Continuous gap return `open(T) / close(T-1) - 1` (stored for evaluation, not used as training label).
-
-#### Scenario: Positive gap labeled correctly
-- **WHEN** T open is higher than T-1 close
-- **THEN** `y = 1` and `gap_return > 0`
-
-#### Scenario: No-gap or negative gap labeled correctly
-- **WHEN** T open equals or is below T-1 close
-- **THEN** `y = 0` and `gap_return <= 0`
-
-### Requirement: Drop events with insufficient bar history
-The module SHALL exclude any event where fewer than 7 valid bars exist in the feature window ending at T-3, and log a warning per dropped event.
-
-#### Scenario: Event dropped on insufficient history
-- **WHEN** only 4 bars are available in the feature window ending at T-3 for an event
-- **THEN** that event is excluded from the output and a warning is logged
-````
-
-## File: strategies/pead_backtest.py
-````python
-"""Event-driven backtest for PEAD strategy.
-
-Simulates overnight entry at T-1 close and exit at T open based on classifier
-predictions, with transaction cost modeling.
-"""
-⋮----
-log = logging.getLogger(__name__)
-⋮----
-def _to_naive_midnight(series_or_index: pd.Series | pd.Index) -> pd.Series | pd.DatetimeIndex
-⋮----
-"""Normalize datetime values to tz-naive midnight for key-safe joins."""
-values = pd.to_datetime(series_or_index)
-⋮----
-values = values.dt.tz_localize(None)
-⋮----
-idx = pd.DatetimeIndex(values)
-⋮----
-idx = idx.tz_localize(None)
-⋮----
-"""Return the trading day at a relative offset from anchor, or None if unavailable."""
-⋮----
-anchor_idx = trading_dates.get_loc(anchor)
-shifted_idx = anchor_idx + offset
-⋮----
-class PEADBacktest
-⋮----
-"""Event-driven backtest for Post-Earnings Announcements Drift strategy.
-
-    Simulates overnight positions: buy at T-1 close, sell at T open.
-    """
-⋮----
-"""Initialize PEAD backtest.
-
-        Parameters
-        ----------
-        predictions_df : pd.DataFrame
-            Walk-forward predictions with columns: pred_label, prob_positive, y, gap_return.
-        bars_dict : dict[str, pd.DataFrame]
-            Dict mapping symbol → OHLCV DataFrame indexed by date.
-        events_df : pd.DataFrame
-            Events DataFrame with columns: earnings_date, t_minus_1.
-        symbol : str
-            The symbol being traded (default "GOOGL").
-        position_size : float
-            Position size as fraction of capital per trade (default 0.05 = 5%).
-        ptc : float
-            Proportional transaction cost per leg (default 0.001 = 0.1%).
-        initial_amount : float
-            Starting capital (default 10000).
-        """
-⋮----
-# Ensure datetime indices
-# Normalize to date-only so timestamps from different sources (e.g. 16:00
-# earnings events vs 00:00 bars) align on calendar day keys.
-⋮----
-def run(self) -> tuple[pd.Series, pd.DataFrame]
-⋮----
-"""Run backtest and return equity curve and trades.
-
-        Returns
-        -------
-        tuple[pd.Series, pd.DataFrame]
-            - equity_curve: Series indexed by earnings_date with account value
-            - trades_df: DataFrame with per-trade records
-        """
-bars = self.bars_dict[self.symbol].copy()
-⋮----
-trading_dates = pd.DatetimeIndex(sorted(bars.index.unique()))
-⋮----
-equity = self.initial_amount
-equity_curve_values = [equity]
-equity_curve_dates = [pd.Timestamp(self.events_df.iloc[0]["earnings_date"]) - pd.Timedelta(days=1)]
-trades = []
-evaluated_events = []
-⋮----
-event_ts = pd.Timestamp(event["earnings_date"])
-t_minus_1_ts = pd.Timestamp(event["t_minus_1"])
-earnings_date = event_ts.date()
-⋮----
-# Check if we have a prediction for this event
-⋮----
-pred = self.predictions_df.loc[event_ts]
-⋮----
-# Derive entry date from T-1 and exit date from earnings day.
-entry_ts = _shift_trading_day(
-⋮----
-exit_ts = _shift_trading_day(trading_dates, event_ts, 1)
-⋮----
-entry_price = float(bars.loc[entry_ts, "close"])
-⋮----
-exit_field = "open" if self.exit_mode == "t_plus_1_open" else "close"
-exit_price = float(bars.loc[exit_ts, exit_field])
-⋮----
-gross_return = (exit_price - entry_price) / entry_price if entry_price > 0 else 0.0
-net_return = gross_return - 2 * self.ptc
-⋮----
-# No model-gated trade for predicted-negative events.
-⋮----
-# Calculate position
-position_value = equity * self.position_size
-⋮----
-# PnL
-pnl = position_value * net_return
-⋮----
-# Update equity
-⋮----
-# Record trade
-⋮----
-# Add to equity curve
-⋮----
-# Build equity curve
-⋮----
-# Build trades DataFrame
-⋮----
-benchmark_df = pd.DataFrame(evaluated_events)
-⋮----
-model_df = benchmark_df[benchmark_df["pred_label"] == 1].copy()
-model_avg_gross = model_df["gross_return"].mean() if not model_df.empty else 0.0
-model_avg_net = model_df["net_return"].mean() if not model_df.empty else 0.0
-model_hit_rate = (model_df["gross_return"] > 0).mean() if not model_df.empty else 0.0
-always_buy_avg_gross = benchmark_df["gross_return"].mean()
-always_buy_avg_net = benchmark_df["net_return"].mean()
-always_buy_hit_rate = (benchmark_df["gross_return"] > 0).mean()
-⋮----
-# Compute risk metrics
-# For event-driven PEAD trades, compute Sharpe from actual trade returns only
-# (not the equity curve with flats), without annualization.
-⋮----
-trade_returns = self.trades_df["net_return"].values
-sharpe = sharpe_ratio_from_returns(trade_returns, periods_per_year=None)
-⋮----
-sharpe = 0.0
-````
-
-## File: strategies/pead_classifier.py
-````python
-"""ML classifier for earnings gap predictions using walk-forward cross-validation.
-
-Implements event-level expanding-window walk-forward validation with logistic
-regression (Phase 1) or configurable classifiers (Phase 2).
-"""
-⋮----
-log = logging.getLogger(__name__)
-⋮----
-"""Run expanding-window walk-forward prediction.
-
-    Parameters
-    ----------
-    features_df : pd.DataFrame
-        Features DataFrame indexed by earnings_date with columns:
-        drift_7d, drift_slope, up_day_count, down_day_count, rel_volume_mean,
-        down_volume_ratio, atr_ratio, gap_count, rel_drift_vs_qqq, y, gap_return.
-    min_train : int
-        Minimum number of training events before making first prediction.
-    threshold : float
-        Probability threshold for binary prediction (default 0.5).
-    model_cls : type or None
-        Classifier class (e.g., LogisticRegression). Default: LogisticRegression.
-    verbose : bool
-        If True, log feature coefficients after each fold fit.
-
-    Returns
-    -------
-    pd.DataFrame
-        Predictions DataFrame with columns:
-        - earnings_date: event date (index)
-        - prob_positive: predicted probability of positive gap
-        - pred_label: thresholded prediction (0 or 1)
-        - y: actual target label
-        - gap_return: actual gap return
-
-    Notes
-    -----
-    - Predictions only available from position min_train onward.
-    - Earlier events are in-sample training only.
-    """
-features_df = features_df.sort_index().copy()
-⋮----
-model_cls = LogisticRegression
-⋮----
-# Feature columns (exclude y, gap_return)
-feature_cols = [
-⋮----
-X = features_df[feature_cols].values
-y = features_df["y"].values
-gap_returns = features_df["gap_return"].values
-dates = features_df.index
-⋮----
-predictions = []
-⋮----
-# Walk-forward loop
-⋮----
-train_idx = test_idx - 1  # Expanding window: 0..test_idx-1 for training
-train_size = train_idx + 1
-⋮----
-# Ensure we have at least min_train events for training
-⋮----
-# Split data
-⋮----
-X_test = X[test_idx : test_idx + 1]
-⋮----
-# Fit scaler on training data only
-scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train)
-X_test_scaled = scaler.transform(X_test)
-⋮----
-# Train model
-model = model_cls(random_state=42, max_iter=1000)
-⋮----
-# Log coefficients if verbose
-⋮----
-coefs = model.coef_[0]
-abs_coefs = np.abs(coefs)
-sorted_idx = np.argsort(-abs_coefs)
-⋮----
-# Predict
-⋮----
-probs = model.predict_proba(X_test_scaled)
-prob_positive = probs[0, 1]  # Probability of class 1
-⋮----
-# Fallback for models without predict_proba
-prob_positive = float(model.predict(X_test_scaled)[0])
-⋮----
-pred_label = 1 if prob_positive >= threshold else 0
-⋮----
-result = pd.DataFrame(predictions)
-⋮----
-def evaluate(predictions_df: pd.DataFrame) -> dict[str, Any]
-⋮----
-"""Evaluate classifier predictions.
-
-    Parameters
-    ----------
-    predictions_df : pd.DataFrame
-        Predictions DataFrame with columns: pred_label, y, gap_return.
-
-    Returns
-    -------
-    dict
-        Report with keys:
-        - hit_rate: proportion of correct predictions among all events
-        - baseline_rate: proportion of positive events in full data
-        - n_trades: number of predicted-positive events
-        - avg_gap_return: mean gap return for predicted-positive events
-        - avg_gap_return_negative: mean gap return for predicted-negative events
-        - n_total: total number of events
-    """
-correct = (predictions_df["pred_label"] == predictions_df["y"]).sum()
-hit_rate = correct / len(predictions_df) if len(predictions_df) > 0 else 0.0
-baseline_rate = predictions_df["y"].mean()
-⋮----
-n_trades = (predictions_df["pred_label"] == 1).sum()
-n_total = len(predictions_df)
-⋮----
-avg_gap_return = predictions_df[predictions_df["pred_label"] == 1]["gap_return"].mean()
-⋮----
-avg_gap_return = 0.0
-⋮----
-n_negative_pred = (predictions_df["pred_label"] == 0).sum()
-⋮----
-avg_gap_return_negative = predictions_df[predictions_df["pred_label"] == 0][
-⋮----
-avg_gap_return_negative = 0.0
-⋮----
-def print_eval_report(report: dict[str, Any]) -> None
-⋮----
-"""Print evaluation report to stdout.
-
-    Parameters
-    ----------
-    report : dict
-        Dictionary returned by evaluate().
-    """
-````
-
-## File: core/__init__.py
-````python
-
-````
-
-## File: data/__init__.py
-````python
-
-````
-
-## File: data/alpaca_data.py
-````python
-def _get_client() -> StockHistoricalDataClient
-⋮----
-"""Build an authenticated StockHistoricalDataClient from environment variables."""
-api_key = os.environ.get("APCA_API_KEY_ID")
-secret_key = os.environ.get("APCA_API_SECRET_KEY")
-⋮----
-"""Fetch historical OHLCV bars for a list of symbols.
-
-    Parameters
-    ----------
-    symbols : list[str]
-        Ticker symbols to fetch.
-    start : str
-        Start date, e.g. '2019-01-01'.
-    end : str
-        End date, e.g. '2024-12-31'.
-    timeframe : TimeFrame
-        Bar timeframe (default: daily).
-
-    Returns
-    -------
-    dict[str, pd.DataFrame]
-        Mapping of symbol → DataFrame with columns [open, high, low, close, volume, return],
-        indexed by date (UTC).
-
-    Raises
-    ------
-    EnvironmentError
-        If Alpaca credentials are not set.
-    ValueError
-        If any symbol has no data in the requested range.
-    """
-client = _get_client()
-⋮----
-request = StockBarsRequest(
-⋮----
-bars = client.get_stock_bars(request)
-df_all = bars.df  # MultiIndex: (symbol, timestamp)
-⋮----
-result: dict[str, pd.DataFrame] = {}
-⋮----
-df = df_all.loc[symbol].copy()
-df.index = pd.to_datetime(df.index).tz_localize(None)  # strip tz for simplicity
-⋮----
-# Keep only OHLCV columns
-df = df[["open", "high", "low", "close", "volume"]]
-⋮----
-# Compute log returns and drop NaN
-````
-
-## File: openspec/changes/archive/2026-04-19-momentum-m7-strategy/specs/backtest-engine/spec.md
-````markdown
-## ADDED Requirements
-
-### Requirement: Event-driven iteration over time bars
-The backtest engine SHALL iterate over each time bar in chronological order, evaluating strategy signals and simulating order execution at each bar.
-
-#### Scenario: Bar-by-bar event loop
-- **WHEN** `run_backtest()` is called
-- **THEN** the engine processes each bar from index `lookback` to `len(data)-1` in order, calling `on_bar(bar)` exactly once per bar
-
-### Requirement: Simulated order execution with transaction costs
-The engine SHALL simulate buy and sell orders using the closing price at the signal bar, applying configurable fixed transaction cost (`ftc`) and proportional transaction cost (`ptc`).
-
-#### Scenario: Buy order reduces cash balance
-- **WHEN** a buy order is placed for N units at price P with ptc=0.001 and ftc=0
-- **THEN** cash decreases by `N * P * (1 + ptc) + ftc`
-
-#### Scenario: Sell order increases cash balance
-- **WHEN** a sell order is placed for N units at price P with ptc=0.001 and ftc=0
-- **THEN** cash increases by `N * P * (1 - ptc) - ftc`
-
-### Requirement: Multi-symbol portfolio state tracking
-The engine SHALL maintain portfolio state across multiple symbols: cash balance, units held per symbol, and current position per symbol.
-
-#### Scenario: Portfolio state initialized correctly
-- **WHEN** a backtest is instantiated with `initial_amount=10000`
-- **THEN** cash equals 10000, units_held is an empty dict, and all positions are neutral (0)
-
-#### Scenario: Portfolio state updated after trade
-- **WHEN** a buy order is executed for symbol S
-- **THEN** `units_held[S]` reflects the purchased units and cash reflects the deducted amount
-
-### Requirement: Equity curve recorded at each rebalance
-The engine SHALL record total portfolio value (cash + mark-to-market holdings) at each rebalance event, producing an equity curve as a pandas Series indexed by date.
-
-#### Scenario: Equity curve length matches rebalance count
-- **WHEN** backtest runs over a period with W weekly rebalances
-- **THEN** the equity curve has exactly W+1 entries (including initial value)
-
-### Requirement: Final close-out and summary
-The engine SHALL close all open positions at the last bar and print a summary: final balance, net performance (%), number of trades, and call `calculate_risk_metrics()`.
-
-#### Scenario: Close-out at end of backtest
-- **WHEN** the event loop reaches the final bar
-- **THEN** all positions are liquidated at the last closing price and the final cash balance reflects all proceeds
-````
-
-## File: openspec/changes/archive/2026-04-19-momentum-m7-strategy/specs/data-layer/spec.md
-````markdown
-## ADDED Requirements
-
-### Requirement: Fetch daily OHLCV bars for a symbol universe
-The system SHALL fetch historical daily bar data for a list of symbols using alpaca-py `StockHistoricalDataClient`, returning a dict mapping each symbol to a pandas DataFrame with columns: `open`, `high`, `low`, `close`, `volume` indexed by date.
-
-#### Scenario: Successful multi-symbol fetch
-- **WHEN** `fetch_bars(symbols, start, end, timeframe)` is called with a list of valid symbols and a date range
-- **THEN** the function returns a dict where each key is a symbol string and each value is a DataFrame with OHLCV columns indexed by UTC date
-
-#### Scenario: Symbol with no data in range
-- **WHEN** a symbol is requested but has no data in the given date range
-- **THEN** the function raises a descriptive `ValueError` identifying the missing symbol
-
-### Requirement: Load API credentials from environment
-The data layer SHALL load `APCA_API_KEY_ID` and `APCA_API_SECRET_KEY` from environment variables (via `.env` file) and MUST NOT accept credentials as hardcoded arguments.
-
-#### Scenario: Credentials loaded from .env
-- **WHEN** `fetch_bars()` is called and a `.env` file with valid credentials exists
-- **THEN** the `StockHistoricalDataClient` authenticates successfully and returns data
-
-#### Scenario: Missing credentials
-- **WHEN** `APCA_API_KEY_ID` or `APCA_API_SECRET_KEY` is not set in the environment
-- **THEN** the function raises a `EnvironmentError` before making any API calls
-
-### Requirement: Compute log returns after fetch
-The data layer SHALL add a `return` column to each symbol's DataFrame, computed as `log(close / close.shift(1))`, and drop rows with NaN values.
-
-#### Scenario: Returns column present after fetch
-- **WHEN** `fetch_bars()` returns successfully
-- **THEN** each symbol DataFrame contains a `return` column with no NaN values
-````
-
-## File: openspec/changes/archive/2026-04-19-momentum-m7-strategy/specs/live-trader/spec.md
-````markdown
-## ADDED Requirements
-
-### Requirement: Connect to Alpaca paper trading account
-The live trader SHALL connect to Alpaca's paper trading endpoint using `TradingClient(api_key, secret_key, paper=True)` and MUST NOT connect to the live trading endpoint.
-
-#### Scenario: Paper trading connection established
-- **WHEN** `LiveTrader` is instantiated
-- **THEN** it creates a `TradingClient` with `paper=True` and verifies the account is accessible
-
-#### Scenario: Live endpoint connection refused
-- **WHEN** `paper=False` is passed to `TradingClient`
-- **THEN** the `LiveTrader` constructor raises a `ValueError` refusing to proceed
-
-### Requirement: Compute momentum signal using latest market data
-The live trader SHALL fetch the most recent N+1 daily bars for all M7 symbols using `StockHistoricalDataClient`, compute N-day returns, and rank symbols — identical logic to the backtest signal.
-
-#### Scenario: Signal computed from latest data
-- **WHEN** `compute_signal()` is called
-- **THEN** it returns a ranked list of symbols using the same lookback window as the configured backtest
-
-### Requirement: Submit market orders for target portfolio
-The live trader SHALL submit `MarketOrderRequest` buy orders for new holdings and sell orders for dropped holdings at market price.
-
-#### Scenario: Buy order submitted for new holding
-- **WHEN** symbol S enters the top-N but is not currently held
-- **THEN** a market buy order for `floor(allocation / current_price)` shares of S is submitted
-
-#### Scenario: Sell order submitted for dropped holding
-- **WHEN** symbol S was held but no longer in top-N
-- **THEN** a market sell order for all held shares of S is submitted
-
-#### Scenario: No order for unchanged holdings
-- **WHEN** symbol S is in top-N and already held with approximately correct weight
-- **THEN** no order is submitted for S
-
-### Requirement: Weekly rebalance trigger
-The live trader SHALL expose a `rebalance()` method that executes the full signal → order cycle. It is the caller's responsibility to invoke this weekly (via cron, scheduler, or manual execution).
-
-#### Scenario: Rebalance completes without error
-- **WHEN** `rebalance()` is called on a Friday during market hours or pre-market
-- **THEN** all necessary orders are submitted and a summary is printed to stdout
-
-#### Scenario: Market closed handling
-- **WHEN** `rebalance()` is called outside market hours
-- **THEN** orders are submitted as market orders and will fill at next open; a warning is logged
-
-### Requirement: Log all order submissions
-The live trader SHALL log each order submission (symbol, side, quantity, order ID) to stdout.
-
-#### Scenario: Order logged on submission
-- **WHEN** any order is submitted
-- **THEN** a line is printed: `[YYYY-MM-DD HH:MM] BUY/SELL <qty> <symbol> → order_id=<id>`
-````
-
-## File: openspec/changes/archive/2026-04-19-momentum-m7-strategy/specs/momentum-strategy/spec.md
-````markdown
-## ADDED Requirements
-
-### Requirement: Rank symbols by N-day simple return
-The strategy SHALL compute the N-day simple price return for each symbol at each rebalance bar and rank symbols from highest to lowest return.
-
-#### Scenario: Returns computed at each rebalance
-- **WHEN** the rebalance event fires at bar T
-- **THEN** each symbol's score is `(close[T] - close[T-N]) / close[T-N]` where N is the configured lookback window
-
-#### Scenario: Symbols ranked correctly
-- **WHEN** NVDA has return=0.42, META=0.28, AAPL=0.05, others negative
-- **THEN** ranking is NVDA(1), META(2), AAPL(3), ... in descending order
-
-### Requirement: Go long top-N symbols equal-weight
-The strategy SHALL enter long positions in the top `top_n` ranked symbols, allocating equal weight (1/top_n of available capital) to each. Symbols outside the top-N SHALL be sold if currently held.
-
-#### Scenario: Equal-weight allocation
-- **WHEN** top_n=3 and available capital is $9000
-- **THEN** each of the 3 selected symbols receives $3000 of capital
-
-#### Scenario: Dropped symbol is sold
-- **WHEN** symbol S was in the top-N at the previous rebalance but is no longer in the top-N at the current rebalance
-- **THEN** all units of S are sold at the current closing price
-
-#### Scenario: New symbol enters top-N
-- **WHEN** symbol S enters the top-N at the current rebalance and is not currently held
-- **THEN** a buy order is placed for S using its equal-weight capital allocation
-
-### Requirement: Rebalance only on weekly frequency
-The strategy SHALL only execute rebalance logic on the last trading day of each calendar week (Friday, or Thursday if Friday is a holiday).
-
-#### Scenario: Rebalance fires on Friday
-- **WHEN** the current bar's date is a Friday
-- **THEN** the full ranking and rebalance logic executes
-
-#### Scenario: No trades on non-rebalance days
-- **WHEN** the current bar's date is Monday through Thursday
-- **THEN** no orders are placed and portfolio state is unchanged
-
-### Requirement: Configurable parameters
-The strategy SHALL accept `lookback` (int, days), `top_n` (int), `symbols` (list of str), `start` (str date), `end` (str date), `initial_amount` (float), `ftc` (float), and `ptc` (float) as constructor parameters.
-
-#### Scenario: Default parameters produce valid backtest
-- **WHEN** strategy is instantiated with symbols=M7, lookback=60, top_n=3, initial_amount=10000
-- **THEN** backtest runs without error over the configured date range
-````
-
-## File: openspec/changes/archive/2026-04-19-momentum-m7-strategy/specs/risk-analytics/spec.md
-````markdown
-## ADDED Requirements
-
-### Requirement: Compute annualized Sharpe ratio from equity curve
-The risk module SHALL compute the annualized Sharpe ratio from a weekly equity curve using the formula: `mean(weekly_returns) / std(weekly_returns) * sqrt(52)`, assuming risk-free rate of 0.
-
-#### Scenario: Sharpe ratio computed correctly
-- **WHEN** `sharpe_ratio(equity_curve, periods_per_year=52)` is called with a pandas Series of weekly portfolio values
-- **THEN** it returns a float representing the annualized Sharpe ratio
-
-#### Scenario: Flat equity curve returns zero Sharpe
-- **WHEN** all equity values are equal (zero volatility)
-- **THEN** the function returns 0.0 (not NaN or error)
-
-### Requirement: Compute maximum drawdown
-The risk module SHALL compute maximum drawdown as the largest peak-to-trough decline in the equity curve, expressed as a percentage: `(trough - peak) / peak * 100`.
-
-#### Scenario: Maximum drawdown computed
-- **WHEN** `max_drawdown(equity_curve)` is called
-- **THEN** it returns a negative float representing the worst percentage decline from any peak
-
-#### Scenario: Always-rising equity has zero drawdown
-- **WHEN** the equity curve is monotonically increasing
-- **THEN** `max_drawdown` returns 0.0
-
-### Requirement: Compute Calmar ratio
-The risk module SHALL compute the Calmar ratio as `annualized_return / abs(max_drawdown)`, where annualized return is `(final_value / initial_value) ^ (periods_per_year / n_periods) - 1`.
-
-#### Scenario: Calmar ratio computed
-- **WHEN** `calmar_ratio(equity_curve, periods_per_year=52)` is called
-- **THEN** it returns a positive float when the strategy is profitable
-
-### Requirement: Print risk summary
-The risk module SHALL provide a `print_summary(equity_curve)` function that prints Sharpe ratio, maximum drawdown, Calmar ratio, total return (%), and number of periods to stdout.
-
-#### Scenario: Summary printed after backtest
-- **WHEN** `print_summary(equity_curve)` is called
-- **THEN** all four metrics are printed with labels and rounded to 2 decimal places
-
-### Requirement: Plot equity curve
-The risk module SHALL provide a `plot_equity_curve(equity_curve, title)` function that renders a matplotlib line chart of portfolio value over time.
-
-#### Scenario: Plot generated without error
-- **WHEN** `plot_equity_curve(equity_curve, title="M7 Momentum")` is called
-- **THEN** a matplotlib figure is created and displayed (or saved if a path is provided)
-````
-
-## File: openspec/changes/archive/2026-04-19-momentum-m7-strategy/.openspec.yaml
-````yaml
-schema: spec-driven
-created: 2026-04-19
-````
-
-## File: openspec/changes/archive/2026-04-19-momentum-m7-strategy/design.md
-````markdown
-## Context
-
-This is a greenfield algorithmic trading project building on the event-driven backtest pattern from Hilpisch's *Python for Algorithmic Trading* (Chapter 6). The existing `BacktestBase` / `BacktestLongOnly` classes in `strategy-lab` provide proven mechanics (event loop, order simulation, P&L tracking) but are tightly coupled to a single symbol and a remote CSV data source. This project adapts that pattern for Alpaca's API, extends it to multi-symbol portfolios, and adds a live paper trading path.
-
-The `strategy-lab` conda environment provides all required dependencies: `alpaca-py`, `pandas`, `numpy`, `python-dotenv`.
-
-## Goals / Non-Goals
-
-**Goals:**
-- Layered architecture (`core/`, `data/`, `strategies/`) so future strategies share infrastructure without duplication
-- Event-driven backtest with full portfolio simulation: multi-symbol, weekly rebalance, transaction cost simulation
-- Risk analytics: annualized Sharpe ratio (√52), max drawdown, Calmar ratio, equity curve
-- Paper trading live execution via `alpaca-py` using the same signal as the backtest
-- Reproducible results with configurable parameters (lookback window, top-N holdings, backtest period)
-
-**Non-Goals:**
-- Intraday (sub-daily) bars — daily bars only for this change
-- Long-short — long-only
-- Live trading with real money — paper account only
-- Optimization / parameter sweep — single parameter set, no grid search
-- Portfolio margin / leverage calculations
-- Notifications or alerting
-
-## Decisions
-
-### D1: Layered architecture over strategy-per-folder
-
-**Decision**: Shared `core/`, `data/`, `risk/` modules; strategy implementations under `strategies/`.
-
-**Rationale**: A folder-per-strategy pattern duplicates data fetching, order simulation, and risk calculation across every strategy. The layered approach mirrors standard OOP design — abstract base classes in `core/`, concrete implementations in `strategies/`. When `mean_reversion` is added later, it subclasses `BacktestBase` and reuses `data/` and `risk/` unchanged.
-
-**Alternative considered**: Copy-paste from `strategy-lab` per strategy. Rejected — creates maintenance burden and diverging logic.
-
-```
-alpaca-lab/
-├── core/
-│   ├── backtest_base.py       ← AlpacaBacktestBase (abstract)
-│   └── live_trader_base.py    ← AlpacaLiveTraderBase (abstract)
-├── data/
-│   └── alpaca_data.py         ← fetch_bars() via alpaca-py
-├── risk/
-│   └── metrics.py             ← Sharpe, drawdown, Calmar, plot
-├── strategies/
-│   └── momentum.py            ← CrossSectionalMomentum(BacktestBase)
-├── config.py                  ← .env loading, M7 symbols, params
-└── run.py                     ← CLI entry point
-```
-
-### D2: Weekly rebalance frequency
-
-**Decision**: Rebalance every Friday (or last trading day of the week).
-
-**Rationale**: Cross-sectional momentum signal has low turnover on daily bars — rankings rarely change day-to-day among M7. Weekly rebalancing reduces transaction costs while capturing meaningful rank shifts. Monthly is too slow for a 7-stock universe where one breakout (e.g., NVDA) can dominate. Daily introduces noise.
-
-**Alternative considered**: Monthly. Rejected — with only 7 symbols, monthly is too coarse; a single outlier holds for too long.
-
-### D3: Momentum signal = N-day simple return, no skip window
-
-**Decision**: Signal = `(price[t] - price[t-N]) / price[t-N]`, no 1-month skip.
-
-**Rationale**: The classic "12-1" skip window (skip most recent month to avoid reversal) is designed for large cross-sectional universes. With only 7 highly-correlated mega-caps, the reversal effect is less pronounced and the skip window reduces the already-small information set. Start without skip; revisit if backtest shows reversal drag.
-
-**Alternative considered**: Log return rolling mean (Hilpisch style). Rejected in favor of simple price return — more interpretable and standard in momentum literature.
-
-### D4: Data fetching via alpaca-py `StockHistoricalDataClient`
-
-**Decision**: Fetch all M7 symbols in a single batched request, cache as a dict of DataFrames keyed by symbol.
-
-**Rationale**: Alpaca's API supports multi-symbol requests natively. Fetching once at backtest start and caching avoids repeated API calls during the event loop. The backtest iterates over time index using `.iloc[bar]` slices per the Hilpisch pattern.
-
-**Alternative considered**: Download to CSV and read locally. Acceptable for production but adds a data management step; fetch-and-cache is simpler for the first iteration.
-
-### D5: Risk metrics in standalone `risk/metrics.py`
-
-**Decision**: Risk calculations are pure functions operating on an equity curve (pandas Series), not methods on the backtest class.
-
-**Rationale**: Pure functions are easier to test, reuse across strategies, and compose. The backtest `close_out()` produces the equity curve; `risk/metrics.py` consumes it. This decouples strategy logic from analytics.
-
-### D6: Live trader uses polling loop, not WebSocket stream
-
-**Decision**: Live paper trader runs as a scheduled weekly job — compute signal at market open Friday, submit orders, exit.
-
-**Rationale**: Interday momentum does not require tick-level data. A simple script that runs once per week (cron or manual trigger) is far simpler than a persistent WebSocket connection. WebSocket is appropriate for intraday strategies (future work).
-
-**Alternative considered**: `StockDataStream` WebSocket. Rejected for this change — adds complexity without benefit for weekly frequency.
-
-## Risks / Trade-offs
-
-- **[Lookahead bias]** → Ensure rebalance signal uses close price of day T, execute at open of day T+1 (next Friday open). The backtest must simulate this correctly.
-- **[Survivorship bias]** → M7 is a backward-looking selection; all seven have survived and thrived. Backtest results will be optimistic vs. a live forward universe. Acknowledged limitation, acceptable for this learning project.
-- **[Alpaca API rate limits]** → Fetching 6 years of daily bars for 7 symbols is well within free tier limits. Low risk.
-- **[Paper trading order fills]** → Alpaca paper trading uses simulated fills at last trade price. May not perfectly reflect real slippage. Acceptable for paper.
-- **[M7 composition drift]** → The "M7" label is recent; historical data for these tickers exists back to 2019 but their collective identity as a group did not. Backtest treats them as a static universe throughout — this is a known approximation.
-
-## Open Questions
-
-- **Lookback window default**: Start with 60 days (3 months)? Easy to make configurable.
-- **Transaction cost simulation**: Use Alpaca's commission-free model (ptc=0, ftc=0) for paper, or simulate realistic costs (e.g., 0.1% ptc)?
-- **Benchmark**: Compare equity curve against SPY buy-and-hold? Would strengthen the backtest analysis.
-````
-
-## File: openspec/changes/archive/2026-04-19-momentum-m7-strategy/proposal.md
-````markdown
-## Why
-
-This project needs a repeatable, well-tested algorithmic trading strategy that can be backtested rigorously and deployed to paper trading. Cross-sectional momentum on the Magnificent 7 (M7) provides a focused, high-signal universe to validate the full pipeline — from data ingestion through live execution — before expanding to broader universes or additional strategies.
-
-## What Changes
-
-- Introduce a layered project structure with shared `core/`, `data/`, and `strategies/` packages to support multiple strategies without code duplication
-- Implement a cross-sectional momentum strategy targeting the M7 stocks (AAPL, MSFT, AMZN, NVDA, GOOGL, META, TSLA)
-- Build an event-driven backtester modeled after the Hilpisch pattern, adapted to fetch data from Alpaca's historical bars API
-- Add a risk analytics module computing Sharpe ratio, maximum drawdown, and Calmar ratio
-- Implement a paper trading live trader using `alpaca-py` TradingClient with weekly rebalancing
-
-## Capabilities
-
-### New Capabilities
-
-- `data-layer`: Fetch and cache daily OHLCV bars for a symbol universe via alpaca-py `StockHistoricalDataClient`
-- `backtest-engine`: Event-driven backtesting base class supporting multi-symbol portfolios with transaction cost simulation
-- `momentum-strategy`: Cross-sectional momentum signal: rank M7 by N-day return, go long top 3 equal-weight, rebalance weekly
-- `risk-analytics`: Compute annualized Sharpe ratio (√52 for weekly), maximum drawdown (peak-to-trough), and Calmar ratio from an equity curve
-- `live-trader`: Paper trading execution using `alpaca-py` TradingClient — weekly rebalance, same signal as backtest
-
-### Modified Capabilities
-
-## Impact
-
-- **New packages**: `core/`, `data/`, `strategies/` under `alpaca-lab/`
-- **Dependencies**: `alpaca-py`, `pandas`, `numpy`, `python-dotenv` (all present in `strategy-lab` conda env)
-- **Config**: `.env` file with `APCA_API_KEY_ID` and `APCA_API_SECRET_KEY` (paper trading keys)
-- **No existing code modified** — greenfield implementation
-````
-
-## File: openspec/changes/archive/2026-04-19-momentum-m7-strategy/tasks.md
-````markdown
-## 1. Project Structure & Config
-
-- [x] 1.1 Create directory layout: `core/`, `data/`, `risk/`, `strategies/` with `__init__.py` files
-- [x] 1.2 Create `config.py` with M7 symbol list, default parameters (lookback=60, top_n=3, start/end dates), and `.env` loading via `python-dotenv`
-
-## 2. Data Layer (`data/alpaca_data.py`)
-
-- [x] 2.1 Implement `fetch_bars(symbols, start, end, timeframe=TimeFrame.Day)` using `StockHistoricalDataClient`
-- [x] 2.2 Add credential loading from environment variables; raise `EnvironmentError` if missing
-- [x] 2.3 Add log return column (`return = log(close / close.shift(1))`) and drop NaN rows for each symbol
-- [x] 2.4 Raise `ValueError` with descriptive message if any requested symbol returns empty data
-
-## 3. Backtest Engine (`core/backtest_base.py`)
-
-- [x] 3.1 Implement `AlpacaBacktestBase.__init__` with portfolio state: `cash`, `units_held` (dict), `trades`, `equity_curve` (list)
-- [x] 3.2 Implement `place_buy_order(symbol, bar, amount)` with `ftc`/`ptc` cost simulation
-- [x] 3.3 Implement `place_sell_order(symbol, bar, units)` with `ftc`/`ptc` cost simulation
-- [x] 3.4 Implement `get_portfolio_value(bar)` summing cash + mark-to-market value of all holdings
-- [x] 3.5 Implement `close_out(bar)` to liquidate all positions and append final equity curve entry
-- [x] 3.6 Implement `run_backtest()` event loop: iterate bars, detect Friday rebalance, call `on_bar(bar)`, record equity
-
-## 4. Risk Analytics (`risk/metrics.py`)
-
-- [x] 4.1 Implement `sharpe_ratio(equity_curve, periods_per_year=52)` — handle zero-volatility edge case
-- [x] 4.2 Implement `max_drawdown(equity_curve)` — peak-to-trough percentage
-- [x] 4.3 Implement `calmar_ratio(equity_curve, periods_per_year=52)`
-- [x] 4.4 Implement `print_summary(equity_curve)` printing all metrics rounded to 2 decimal places
-- [x] 4.5 Implement `plot_equity_curve(equity_curve, title, save_path=None)` using matplotlib
-
-## 5. Momentum Strategy (`strategies/momentum.py`)
-
-- [x] 5.1 Implement `CrossSectionalMomentum(AlpacaBacktestBase).__init__` accepting all configurable parameters
-- [x] 5.2 Implement `compute_scores(bar)` — N-day simple return for each symbol, return ranked Series
-- [x] 5.3 Implement `on_bar(bar)` — if Friday: call `compute_scores`, select top_n, sell dropped symbols, buy new symbols equal-weight
-- [x] 5.4 Implement `run_backtest()` override calling parent event loop, then `risk.print_summary(self.equity_curve)` and `risk.plot_equity_curve()`
-- [x] 5.5 Verify rebalance-only-on-Friday logic: non-Friday bars must produce no orders
-
-## 6. Entry Point (`run.py`)
-
-- [x] 6.1 Create `run.py` CLI that instantiates `CrossSectionalMomentum` with params from `config.py` and calls `run_backtest()`
-- [x] 6.2 Print backtest configuration summary (symbols, lookback, top_n, date range, initial capital) before running
-
-## 7. Live Trader (`core/live_trader_base.py` + `strategies/momentum.py`)
-
-- [x] 7.1 Implement `AlpacaLiveTraderBase.__init__` with `TradingClient(paper=True)`; raise `ValueError` if `paper=False`
-- [x] 7.2 Implement `get_current_positions()` using `TradingClient.get_all_positions()`
-- [x] 7.3 Implement `submit_order(symbol, side, qty)` using `MarketOrderRequest`; log each submission
-- [x] 7.4 Add `LiveMomentumTrader(AlpacaLiveTraderBase)` with `compute_signal()` using `StockHistoricalDataClient`
-- [x] 7.5 Implement `rebalance()`: fetch latest data → compute signal → diff vs current positions → submit buy/sell orders
-- [x] 7.6 Add market-hours warning when `rebalance()` is called outside NYSE hours
-
-## 8. Validation
-
-- [ ] 8.1 Run backtest over 2019-01-01 to 2024-12-31; confirm equity curve is generated and risk metrics print without error
-- [ ] 8.2 Visually inspect equity curve plot for sanity (no flat lines, no NaN gaps)
-- [ ] 8.3 Run `python run.py` and confirm output includes Sharpe ratio, max drawdown, Calmar ratio
-- [ ] 8.4 Run `LiveMomentumTrader.rebalance()` once against paper account; confirm orders appear in Alpaca paper dashboard
-````
-
-## File: openspec/changes/archive/2026-04-21-moc-execution/specs/live-trader/spec.md
-````markdown
-## MODIFIED Requirements
-
-### Requirement: Submit market orders for target portfolio
-The live trader SHALL submit `MarketOrderRequest` buy and sell orders using `TimeInForce.CLS` (Market-on-Close) so that live execution price matches the closing price assumed by the backtest engine. Orders MUST be submitted while the market is open and before the exchange MOC cutoff (3:50 PM ET / 19:50 UTC).
-
-#### Scenario: Buy order submitted as MOC for new holding
-- **WHEN** symbol S enters the top-N but is not currently held
-- **THEN** a MOC buy order (`time_in_force=TimeInForce.CLS`) for `floor(allocation / current_price)` shares of S is submitted
-
-#### Scenario: Sell order submitted as MOC for dropped holding
-- **WHEN** symbol S was held but no longer in top-N
-- **THEN** a MOC sell order (`time_in_force=TimeInForce.CLS`) for all held shares of S is submitted
-
-#### Scenario: No order for unchanged holdings
-- **WHEN** symbol S is in top-N and already held with approximately correct weight
-- **THEN** no order is submitted for S
-
-### Requirement: Weekly rebalance trigger
-The live trader SHALL expose a `rebalance()` method that executes the full signal → order cycle. The caller SHALL invoke this weekly via cron at `45 19 * * 1` (19:45 UTC, 2:45 PM ET) to ensure MOC orders are submitted before the 19:50 UTC exchange cutoff.
-
-#### Scenario: Rebalance completes with MOC orders
-- **WHEN** `rebalance()` is called on a Monday between market open and 19:50 UTC
-- **THEN** all necessary MOC orders are submitted and confirmed via log output
-
-#### Scenario: Market closed handling
-- **WHEN** `rebalance()` is called outside market hours
-- **THEN** a `RuntimeError` is raised and no orders are submitted
-````
-
-## File: openspec/changes/archive/2026-04-21-moc-execution/.openspec.yaml
-````yaml
-schema: spec-driven
-created: 2026-04-20
-````
-
-## File: openspec/changes/archive/2026-04-21-moc-execution/design.md
-````markdown
-## Context
-
-The live trader currently submits intraday market orders (`TimeInForce.DAY`) at ~10:35 AM ET every Monday. The backtest engine simulates execution at Monday's closing price. This gap means live returns will differ from backtested results even with the same signal.
-
-Additionally, the cron is set to `35 14 * * 1` (14:35 UTC), which is only 5 minutes after open during winter (EST, UTC-5), placing execution in the noisiest window of the trading day.
-
-## Goals / Non-Goals
-
-**Goals:**
-- Align live execution price with the backtest's close-price assumption
-- Eliminate DST sensitivity in the cron timing by switching to a fixed UTC pre-close window
-- Ensure `_warn_if_outside_hours` remains a useful guard under the new timing model
-
-**Non-Goals:**
-- Changing the signal computation (still based on prior close prices)
-- Supporting fractional shares or notional orders
-- Modifying the backtest engine (already correct)
-
-## Decisions
-
-### Decision: Use `TimeInForce.CLS` (MOC orders)
-
-**Chosen**: Change `submit_order` to use `TimeInForce.CLS` in `MarketOrderRequest`.
-
-**Alternatives considered:**
-- `TimeInForce.DAY` at a later time (e.g., 15:30 UTC) — still intraday, still diverges from backtest close price
-- Limit orders at last close price — complicates order management, risk of non-fill
-
-**Rationale**: MOC is the simplest change that closes the backtest/live gap. The execution price *is* the close price, exactly what the backtest models. Alpaca paper trading supports MOC.
-
-### Decision: Cron timing → 19:45 UTC Monday
-
-**Chosen**: `45 19 * * 1` — 2:45 PM ET year-round (19:50 UTC is Alpaca's MOC cutoff; 5-min buffer).
-
-**Rationale**: NYSE MOC cutoff is 3:50 PM ET = 19:50 UTC fixed (no DST shift since NYSE close is always 21:00 UTC). 19:45 UTC gives a 5-minute submission buffer while ensuring the script runs well within the window.
-
-### Decision: Relax `_warn_if_outside_hours` to check only market-open, not time-of-day
-
-**Chosen**: Keep the existing `is_open` check. MOC orders must be submitted while the market is open (after 9:30 AM, before 3:50 PM ET). Alpaca's clock `is_open` flag covers this window naturally — no additional time-of-day logic needed.
-
-**Rationale**: Adding a hardcoded 19:50 UTC ceiling creates a new DST-like fragility. Alpaca's clock is the authoritative source.
-
-## Risks / Trade-offs
-
-- **MOC not accepted on halted stocks** → Alpaca will reject the order; the existing error logging in `submit_order` will capture this. No special handling needed for paper trading.
-- **Script fires after 19:50 UTC** (e.g., cron delay, server lag) → MOC deadline missed, order rejected. Mitigation: 5-minute buffer in cron timing; operator should monitor `output/live_rebalance.log`.
-- **Price slippage at close auction** → MOC fills at the official closing price; any large imbalance in the closing auction could affect fill. Negligible at these quantities vs. M7 daily volume.
-
-## Migration Plan
-
-1. Update `TimeInForce.DAY` → `TimeInForce.CLS` in `live_trader_base.py`
-2. Update crontab on the DigitalOcean droplet: `35 14 * * 1` → `45 19 * * 1`
-3. Update the crontab comment in `weekly_live_rebalance.py` and example in `README.md`
-4. Next Monday: verify orders appear in Alpaca UI as MOC type, confirm fill at closing price
-
-**Rollback**: Revert `TimeInForce.CLS` to `TimeInForce.DAY` and restore crontab. No data migration required.
-
-## Open Questions
-
-None — all decisions resolved in the explore session.
-````
-
-## File: openspec/changes/archive/2026-04-21-moc-execution/proposal.md
-````markdown
-## Why
-
-Live orders execute mid-morning (~10:35 AM ET) using `TimeInForce.DAY`, while the backtest simulates execution at Monday's close price. This backtest/live misalignment means live results will diverge from backtested expectations. Switching to Market-on-Close (MOC) orders aligns live execution with the close price the backtest already assumes, eliminates DST sensitivity in the cron schedule, and reduces intraday slippage noise.
-
-## What Changes
-
-- `core/live_trader_base.py`: Change `TimeInForce.DAY` → `TimeInForce.CLS` in `submit_order`
-- `core/live_trader_base.py`: Update `_warn_if_outside_hours` to also enforce a pre-close submission cutoff (must submit before 3:50 PM ET)
-- `scripts/weekly_live_rebalance.py`: Update crontab comment to reflect new timing
-- `README.md`: Update crontab example from `35 14 * * 1` (14:35 UTC) to `45 19 * * 1` (19:45 UTC, DST-safe)
-
-## Capabilities
-
-### New Capabilities
-
-None.
-
-### Modified Capabilities
-
-- `live-trader`: Order submission now uses MOC (`TimeInForce.CLS`) instead of intraday market orders; `_warn_if_outside_hours` enforces a pre-close cutoff in addition to market-open check.
-
-## Impact
-
-- **`core/live_trader_base.py`**: `submit_order` and `_warn_if_outside_hours` change
-- **`scripts/weekly_live_rebalance.py`**: Comment update only
-- **`README.md`**: Crontab example update
-- **`core/backtest_base.py`**: No changes required — already executes at close
-- **`strategies/momentum.py`**: No changes required
-- **Dependencies**: `alpaca-py` already exposes `TimeInForce.CLS`; no new packages needed
-````
-
-## File: openspec/changes/archive/2026-04-21-moc-execution/tasks.md
-````markdown
-## 1. Live Trader — MOC Order Execution
-
-- [x] 1.1 In `core/live_trader_base.py`, change `time_in_force=TimeInForce.DAY` to `time_in_force=TimeInForce.CLS` in `submit_order`
-
-## 2. Documentation — Crontab Timing
-
-- [x] 2.1 In `scripts/weekly_live_rebalance.py`, update the crontab comment from `35 14 * * 1` (14:35 UTC) to `45 19 * * 1` (19:45 UTC) and update the timing rationale comment
-- [x] 2.2 In `README.md`, update the crontab example from `35 14 * * 1` to `45 19 * * 1` and update the timing explanation
-
-## 3. Verification
-
-- [ ] 3.1 Update the crontab on the DigitalOcean droplet to `45 19 * * 1`
-- [ ] 3.2 On next Monday, verify orders appear in Alpaca UI as MOC type and fill at the official closing price
-````
-
-## File: openspec/specs/backtest-engine/spec.md
-````markdown
-## ADDED Requirements
-
-### Requirement: Event-driven iteration over time bars
-The backtest engine SHALL iterate over each time bar in chronological order, evaluating strategy signals and simulating order execution at each bar.
-
-#### Scenario: Bar-by-bar event loop
-- **WHEN** `run_backtest()` is called
-- **THEN** the engine processes each bar from index `lookback` to `len(data)-1` in order, calling `on_bar(bar)` exactly once per bar
-
-### Requirement: Simulated order execution with transaction costs
-The engine SHALL simulate buy and sell orders using the closing price at the signal bar, applying configurable fixed transaction cost (`ftc`) and proportional transaction cost (`ptc`).
-
-#### Scenario: Buy order reduces cash balance
-- **WHEN** a buy order is placed for N units at price P with ptc=0.001 and ftc=0
-- **THEN** cash decreases by `N * P * (1 + ptc) + ftc`
-
-#### Scenario: Sell order increases cash balance
-- **WHEN** a sell order is placed for N units at price P with ptc=0.001 and ftc=0
-- **THEN** cash increases by `N * P * (1 - ptc) - ftc`
-
-### Requirement: Multi-symbol portfolio state tracking
-The engine SHALL maintain portfolio state across multiple symbols: cash balance, units held per symbol, and current position per symbol.
-
-#### Scenario: Portfolio state initialized correctly
-- **WHEN** a backtest is instantiated with `initial_amount=10000`
-- **THEN** cash equals 10000, units_held is an empty dict, and all positions are neutral (0)
-
-#### Scenario: Portfolio state updated after trade
-- **WHEN** a buy order is executed for symbol S
-- **THEN** `units_held[S]` reflects the purchased units and cash reflects the deducted amount
-
-### Requirement: Equity curve recorded at each rebalance
-The engine SHALL record total portfolio value (cash + mark-to-market holdings) at each rebalance event, producing an equity curve as a pandas Series indexed by date.
-
-#### Scenario: Equity curve length matches rebalance count
-- **WHEN** backtest runs over a period with W weekly rebalances
-- **THEN** the equity curve has exactly W+1 entries (including initial value)
-
-### Requirement: Final close-out and summary
-The engine SHALL close all open positions at the last bar and print a summary: final balance, net performance (%), number of trades, and call `calculate_risk_metrics()`.
-
-#### Scenario: Close-out at end of backtest
-- **WHEN** the event loop reaches the final bar
-- **THEN** all positions are liquidated at the last closing price and the final cash balance reflects all proceeds
-````
-
-## File: openspec/specs/data-layer/spec.md
-````markdown
-## MODIFIED Requirements
-
-### Requirement: Fetch daily OHLCV bars for a symbol universe
-The system SHALL fetch historical daily bar data for a list of symbols using alpaca-py `StockHistoricalDataClient`, returning a dict mapping each symbol to a pandas DataFrame with columns: `open`, `high`, `low`, `close`, `volume` indexed by date. The function SHALL accept an optional `symbols` parameter allowing single-symbol fetches (e.g., `["QQQ"]`) in addition to the existing multi-symbol use case. All other behavior is unchanged.
-
-#### Scenario: Successful multi-symbol fetch
-- **WHEN** `fetch_bars(symbols, start, end, timeframe)` is called with a list of valid symbols and a date range
-- **THEN** the function returns a dict where each key is a symbol string and each value is a DataFrame with OHLCV columns indexed by UTC date
-
-#### Scenario: Single-symbol fetch for benchmark
-- **WHEN** `fetch_bars(["QQQ"], start, end)` is called
-- **THEN** the function returns a dict with a single key `"QQQ"` and a valid OHLCV DataFrame
-
-#### Scenario: Symbol with no data in range
-- **WHEN** a symbol is requested but has no data in the given date range
-- **THEN** the function raises a descriptive `ValueError` identifying the missing symbol
-
-#### Scenario: Credentials loaded from .env
-- **WHEN** `fetch_bars()` is called and a `.env` file with valid credentials exists
-- **THEN** the `StockHistoricalDataClient` authenticates successfully and returns data
-
-#### Scenario: Missing credentials
-- **WHEN** `APCA_API_KEY_ID` or `APCA_API_SECRET_KEY` is not set in the environment
-- **THEN** the function raises a `EnvironmentError` before making any API calls
-
-#### Scenario: Returns column present after fetch
-- **WHEN** `fetch_bars()` returns successfully
-- **THEN** each symbol DataFrame contains a `return` column with no NaN values
-````
-
 ## File: openspec/specs/momentum-strategy/spec.md
 ````markdown
 ## ADDED Requirements
@@ -2551,6 +3453,479 @@ The strategy SHALL accept `lookback` (int, days), `top_n` (int), `symbols` (list
 #### Scenario: Default parameters produce valid backtest
 - **WHEN** strategy is instantiated with symbols=M7, lookback=60, top_n=3, initial_amount=10000
 - **THEN** backtest runs without error over the configured date range
+````
+
+## File: openspec/specs/pead-backtest/spec.md
+````markdown
+## MODIFIED Requirements
+
+### Requirement: Event-driven backtest simulating overnight entry at T-1 close
+The PEAD backtest SHALL support a configurable entry offset `PEAD_ENTRY_OFFSET_DAYS` and SHALL enter a long position at `open(T-E)` for each event where `pred_label == 1`, where E is the configured entry offset. The backtest SHALL exit at either T+1 open or T+1 close according to configured exit mode. Each trade is independent; no portfolio is held between events.
+
+#### Scenario: Trade entered at T-3 open
+- **WHEN** `pred_label == 1` and `PEAD_ENTRY_OFFSET_DAYS=3`
+- **THEN** a long entry is recorded at `open(T-3)` with configured position size as a fraction of capital
+
+#### Scenario: Trade exited at T+1 open
+- **WHEN** a trade is open and the configured exit mode is `t_plus_1_open`
+- **THEN** the position is closed at `open(T+1)` and PnL is recorded from `open(T-E)` to `open(T+1)`
+
+#### Scenario: Trade exited at T+1 close
+- **WHEN** a trade is open and the configured exit mode is `t_plus_1_close`
+- **THEN** the position is closed at `close(T+1)` and PnL is recorded from `open(T-E)` to `close(T+1)`
+
+#### Scenario: No trade on predicted-negative event
+- **WHEN** `pred_label == 0` for an event
+- **THEN** no entry or exit is simulated and capital is unchanged
+
+### Requirement: Invocable via `python run.py --mode pead-backtest`
+The main entry point SHALL support `--mode pead-backtest` as the PEAD timing-variant runner that executes the full pipeline: fetch earnings events -> fetch bars -> build features using bars available by `T-(E+1)` where E is `PEAD_ENTRY_OFFSET_DAYS` -> walk-forward predict -> backtest the configured entry/exit horizon -> print summary.
+
+#### Scenario: pead-backtest mode runs end to end
+- **WHEN** `python run.py --mode pead-backtest` is invoked
+- **THEN** the full configured timing-variant pipeline completes without error and prints a PEAD risk summary
+
+#### Scenario: Existing non-PEAD modes unaffected
+- **WHEN** `python run.py --mode backtest` or `--mode live` is invoked
+- **THEN** behavior is identical to before this change
+````
+
+## File: openspec/specs/pead-entry-timing-config/spec.md
+````markdown
+## ADDED Requirements
+
+### Requirement: Configurable PEAD entry offset for backtest and live execution
+The system SHALL expose a configuration parameter `PEAD_ENTRY_OFFSET_DAYS` representing the entry day offset in trading days before earnings day T. The value MUST be a positive integer and SHALL be interpreted consistently by backtest and live code paths.
+
+#### Scenario: Valid offset accepted
+- **WHEN** `PEAD_ENTRY_OFFSET_DAYS=3` is configured
+- **THEN** both backtest and live logic treat entry day as T-3
+
+#### Scenario: Invalid offset rejected
+- **WHEN** `PEAD_ENTRY_OFFSET_DAYS` is set to 0, a negative number, or a non-integer value
+- **THEN** the system raises a configuration validation error before any trading or backtest execution begins
+
+### Requirement: Derived feature anchor from configured entry offset
+For an entry offset E, the feature window anchor SHALL be T-(E+1), and the 7-day feature window SHALL cover the 7 trading days ending at that anchor date (inclusive).
+
+#### Scenario: T-3 open entry derives T-4 anchor
+- **WHEN** `PEAD_ENTRY_OFFSET_DAYS=3`
+- **THEN** feature anchor is T-4 and the feature window is T-10 through T-4
+
+#### Scenario: T-5 open entry derives T-6 anchor
+- **WHEN** `PEAD_ENTRY_OFFSET_DAYS=5`
+- **THEN** feature anchor is T-6 and the feature window is the 7 trading days ending at T-6
+
+### Requirement: Runtime visibility of effective timing configuration
+The system SHALL log the effective entry offset, derived feature anchor offset, and resolved entry/exit dates for each run.
+
+#### Scenario: Effective timing is logged
+- **WHEN** a PEAD backtest or live run starts
+- **THEN** logs include `entry_offset_days`, `feature_anchor_offset_days`, and configured exit mode
+````
+
+## File: openspec/specs/pead-live-trader/spec.md
+````markdown
+## ADDED Requirements
+
+### Requirement: Daily cronjob executes PEAD trading logic
+
+The system SHALL run PEAD live execution as a daily cronjob. At each execution, the system SHALL:
+1. Check each symbol (NXPI, AMD, AVGO) to determine if today is T-3 or T+1+ relative to the symbol's nearest upcoming earnings date
+2. Execute entry orders for any symbol at T-3, provided a positive classifier prediction exists
+3. Execute exit orders for any symbol at T+1 or later, if a position is currently open
+4. Log all order execution results
+
+#### Scenario: Entry trigger on T-3
+- **WHEN** cronjob runs on a day that is T-3 for a symbol's nearest earnings event AND classifier predicts positive (pred_label == 1)
+- **THEN** system SHALL fetch 7-day OHLCV data (T-9 through T-3), place a market BUY order, record entry state with entry_date/entry_price/entry_qty
+
+#### Scenario: Entry skipped on negative prediction
+- **WHEN** cronjob runs on T-3 for a symbol AND classifier predicts negative (pred_label == 0)
+- **THEN** system SHALL not place an order; position entry is skipped for this event
+
+#### Scenario: Exit trigger on T+1 or later
+- **WHEN** cronjob runs on a day that is T+1 or later for a symbol's current open earnings event AND a position is currently open
+- **THEN** system SHALL place a market SELL order at current market price (immediate execution), log exit price and PnL, clear state entry for that symbol
+
+#### Scenario: Double-trade prevention
+- **WHEN** cronjob runs on T-3 for a symbol AND state file already shows an open position for this symbol and the same earnings_date
+- **THEN** system SHALL not place another BUY order; only one entry per symbol per earnings event
+
+#### Scenario: Missed cronjob recovery
+- **WHEN** cronjob does not run on T+1 (e.g., droplet downtime), but runs on T+2 or later AND a position is still open
+- **THEN** system SHALL execute the exit order immediately on the first available execution, preventing positions from lingering past intended exit date
+
+### Requirement: Classifier integration for entry prediction
+
+The system SHALL use a pre-trained, frozen classifier to generate predictions for live trades. For each symbol on T-3:
+1. Load the latest trained classifier (no retraining during live cycle)
+2. Extract 7-day pre-earnings features (T-9 through T-3)
+3. Generate pred_label (0 or 1) and prob_positive probability
+4. Use pred_label to gate entry: only execute if pred_label == 1
+
+#### Scenario: Load classifier
+- **WHEN** daily cronjob initializes
+- **THEN** system SHALL load the most recent trained classifier model
+
+#### Scenario: Predict for T-3 features
+- **WHEN** on T-3 execution and need to decide whether to enter
+- **THEN** system SHALL extract 7-day momentum/volatility/QQQ correlation features, invoke classifier.predict(), receive pred_label and prob_positive
+
+#### Scenario: Entry gated on positive prediction
+- **WHEN** classifier returns pred_label == 1
+- **THEN** entry order proceeds to execution
+
+#### Scenario: Entry blocked on negative prediction
+- **WHEN** classifier returns pred_label == 0
+- **THEN** entry order is not placed; day is recorded as "skipped"
+
+### Requirement: Market order execution with Alpaca API
+
+The system SHALL submit market orders via Alpaca's trading API (paper trading account). For each order:
+1. Calculate position size as `(account_equity * 0.10) / current_price` for entry orders
+2. Submit market order (buy on entry, sell on exit) with time_in_force = Day
+3. Capture order ID, fill price, and fill timestamp
+4. Handle errors (insufficient buying power, API rate limits) by logging and deferring to next cronjob run
+
+#### Scenario: Calculate entry position size
+- **WHEN** entry order is ready to submit
+- **THEN** system SHALL read account equity, multiply by 0.10 (10% position size), divide by T-3 close price to get share count, round down to integer
+
+#### Scenario: Submit entry market order
+- **WHEN** position size is calculated
+- **THEN** system SHALL submit market BUY order via AlpacaLiveTraderBase, capturing order_id and requested fill price
+
+#### Scenario: Submit exit market order
+- **WHEN** T+1+ exit is triggered
+- **THEN** system SHALL submit market SELL order via AlpacaLiveTraderBase for the full open position quantity, capturing order_id and fill price
+
+#### Scenario: Handle Alpaca errors gracefully
+- **WHEN** order submission fails (e.g., API down, insufficient buying power)
+- **THEN** system SHALL log error, not crash, continue to next symbol, retry on next cronjob run
+
+### Requirement: Earnings date fetching and T-N offset calculation
+
+The system SHALL fetch the nearest upcoming earnings date for each symbol using yfinance, then calculate T-3 and T+1 offsets accounting for NYSE trading calendar (exclude weekends, US federal holidays).
+
+#### Scenario: Fetch nearest earnings date
+- **WHEN** cronjob runs
+- **THEN** system SHALL call fetch_earnings_events(symbol) to retrieve the next upcoming earnings date for each symbol (NXPI, AMD, AVGO)
+
+#### Scenario: Calculate T-3 from earnings date
+- **WHEN** earnings_date is known
+- **THEN** system SHALL find the trading day exactly 3 trading days before earnings_date (skip weekends and US holidays), call this T-3
+
+#### Scenario: Calculate T+1 from earnings date
+- **WHEN** earnings_date is known
+- **THEN** system SHALL find the trading day exactly 1 trading day after earnings_date, call this T+1
+
+#### Scenario: Handle holiday edge cases
+- **WHEN** earnings_date or T-3/T+1 calculation crosses a US federal holiday or weekend
+- **THEN** system SHALL skip non-trading days and use NYSE trading calendar to find the correct trading day offset
+
+### Requirement: PnL calculation at exit
+
+The system SHALL calculate and record the profit/loss for each trade at exit time using actual execution prices.
+
+#### Scenario: Calculate net PnL in dollars
+- **WHEN** exit order executes on T+1
+- **THEN** system SHALL compute: pnl_dollars = (exit_price - entry_price) * qty_shares - (2 * 0.001 * position_value) [accounting for entry and exit transaction costs of 0.1% each]
+
+#### Scenario: Calculate PnL percentage
+- **WHEN** exit order executes
+- **THEN** system SHALL compute: pnl_pct = pnl_dollars / (entry_price * qty_shares)
+
+#### Scenario: Record PnL in trade log
+- **WHEN** exit order executes with known entry_price, exit_price, and qty
+- **THEN** system SHALL append pnl_dollars and pnl_pct to the trade log entry
+````
+
+## File: openspec/specs/pead-state-manager/spec.md
+````markdown
+## ADDED Requirements
+
+### Requirement: State file structure and initialization
+
+The state file (`output/pead_live_state.json`) SHALL be a JSON document tracking current open positions per symbol. Structure: `{symbol: {earnings_date, entry_date, entry_price, entry_qty, created_at}}`. The state file SHALL be initialized as empty on first run or if no positions are open.
+
+#### Scenario: Load state file on startup
+- **WHEN** cronjob starts and state file exists
+- **THEN** system SHALL read and parse the JSON file; if parsing fails, log error and treat as empty state
+
+#### Scenario: Initialize state file if missing
+- **WHEN** state file does not exist
+- **THEN** system SHALL create an empty state file `{}`
+
+#### Scenario: State structure for single open position
+- **WHEN** one symbol has an open position for current earnings event
+- **THEN** state file SHALL contain: `{"NXPI": {"earnings_date": "2026-04-30", "entry_date": "2026-04-27", "entry_price": 125.50, "entry_qty": 80, "created_at": "2026-04-27T16:00:00Z"}}`
+
+#### Scenario: State structure for multiple open positions
+- **WHEN** multiple symbols have open positions simultaneously
+- **THEN** state file SHALL contain entries for each symbol independently: `{"NXPI": {...}, "AMD": {...}, "AVGO": {...}}`
+
+### Requirement: Record new position state on entry
+
+When an entry order executes, the system SHALL write a new state entry with entry details and timestamp.
+
+#### Scenario: Write entry state after buy order
+- **WHEN** entry market order executes on T-3
+- **THEN** system SHALL append/update state entry: `state[symbol] = {earnings_date, entry_date: today, entry_price: filled_price, entry_qty: filled_qty, created_at: timestamp}`
+
+#### Scenario: Entry state persists until exit
+- **WHEN** entry state is recorded and position is held through T+1
+- **THEN** state entry SHALL remain in the state file until exit order executes
+
+### Requirement: Idempotency check before entry
+
+Before placing an entry order, the system SHALL check if a position already exists for this symbol and earnings date, and skip if already present.
+
+#### Scenario: Skip entry if already in state
+- **WHEN** cronjob runs on T-3 AND symbol already exists in state file with the same earnings_date
+- **THEN** system SHALL not place another BUY order; record as "skipped (already entered)"
+
+#### Scenario: Allow entry if earnings event is different
+- **WHEN** cronjob runs on T-3 for earnings event E2 AND symbol exists in state but for a previous earnings event E1
+- **THEN** this would indicate a failed exit (shouldn't happen); log warning and do not enter (state cleanup required manually)
+
+### Requirement: Delete state entry on position exit
+
+After a position exits, the system SHALL delete the corresponding state entry, resetting to clean slate for the next earnings event.
+
+#### Scenario: Delete entry on successful exit
+- **WHEN** exit market order executes on T+1
+- **THEN** system SHALL delete `state[symbol]`, leaving state file clean for next earnings event
+
+#### Scenario: Clean state for future events
+- **WHEN** position is exited and state entry is deleted
+- **THEN** next earnings event for the same symbol can re-enter without interference
+
+### Requirement: Auto-cleanup of stale state entries
+
+The system SHALL automatically remove state entries older than 30 days, in case a position was never exited (e.g., due to manual intervention or error).
+
+#### Scenario: Cleanup entries older than 30 days
+- **WHEN** cronjob runs and detects a state entry with created_at timestamp > 30 days ago
+- **THEN** system SHALL delete that entry, log warning: "Cleaned up stale NXPI position from 2026-03-25"
+
+#### Scenario: Do not cleanup recent entries
+- **WHEN** state entry has created_at < 30 days ago
+- **THEN** entry SHALL remain in the state file
+
+### Requirement: Atomic read-modify-write for state file
+
+State file operations (read, check, update, write) SHALL be performed atomically to prevent corruption or lost updates if multiple cronjobs run simultaneously.
+
+#### Scenario: Atomic entry write
+- **WHEN** placing an entry order
+- **THEN** system SHALL: load state file, check if symbol exists, add/update entry, write atomically (not partial writes)
+
+#### Scenario: Atomic entry delete
+- **WHEN** exiting a position
+- **THEN** system SHALL: load state file, delete symbol entry, write atomically
+
+#### Scenario: Handle concurrent writes
+- **WHEN** two cronjob instances try to update state simultaneously
+- **THEN** system SHALL use file locking or atomic operations to ensure one write completes before the other starts (no corruption)
+
+### Requirement: Human-readable state file format
+
+The state file format SHALL be plain JSON, suitable for manual inspection and debugging.
+
+#### Scenario: State file is readable without special tools
+- **WHEN** cronjob writes state file
+- **THEN** a human can open the file in a text editor and understand the current position(s)
+
+#### Scenario: Pretty-printed JSON for clarity
+- **WHEN** state file is written
+- **THEN** JSON SHALL be formatted with indentation (not minified) for readability
+````
+
+## File: openspec/specs/pead-trade-logger/spec.md
+````markdown
+## ADDED Requirements
+
+### Requirement: Trade log file structure and initialization
+
+The trade log (`output/pead_live_trades.csv`) SHALL be an append-only CSV file with columns: symbol, earnings_date, entry_date, exit_date, entry_price, exit_price, qty, pnl, pnl_pct, timestamp. The file SHALL be initialized with a header row on first write if it does not exist.
+
+#### Scenario: Initialize trade log with header
+- **WHEN** trade log does not exist and first trade is recorded
+- **THEN** system SHALL create the file with header row: `symbol,earnings_date,entry_date,exit_date,entry_price,exit_price,qty,pnl,pnl_pct,timestamp`
+
+#### Scenario: Load existing trade log
+- **WHEN** trade log already exists
+- **THEN** system SHALL append new trades to the existing file, preserving all previous records
+
+#### Scenario: Trade log structure for single trade
+- **WHEN** one trade completes (entry + exit)
+- **THEN** trade log SHALL contain one row with all fields populated: `NXPI,2026-04-30,2026-04-27,2026-04-28,125.50,128.60,80,240.00,0.0238,2026-04-28T16:00:00Z`
+
+### Requirement: Record trade entry event
+
+When an entry order executes, the system SHALL begin recording trade details (capture symbol, earnings_date, entry_date, entry_price, entry_qty).
+
+#### Scenario: Capture entry details on order execution
+- **WHEN** entry market order executes on T-3
+- **THEN** system SHALL store: symbol, earnings_date, entry_date=today, entry_price=filled_price, qty=filled_qty, entry_timestamp
+
+#### Scenario: Hold entry details until exit
+- **WHEN** entry is recorded and position held through T+1
+- **THEN** entry details SHALL be retained in memory or temporary state, waiting for exit to complete the trade record
+
+### Requirement: Record trade exit and compute PnL
+
+When an exit order executes on T+1+, the system SHALL complete the trade record by adding exit details and computed PnL, then append one row to the trade log CSV.
+
+#### Scenario: Capture exit details on order execution
+- **WHEN** exit market order executes on T+1
+- **THEN** system SHALL capture: exit_date=today, exit_price=filled_price, exit_timestamp
+
+#### Scenario: Compute net PnL with transaction costs
+- **WHEN** exit order executes
+- **THEN** system SHALL compute:
+  - gross_pnl_pct = (exit_price - entry_price) / entry_price
+  - net_pnl_pct = gross_pnl_pct - 0.002 (entry cost 0.1% + exit cost 0.1%)
+  - pnl_dollars = net_pnl_pct * entry_price * qty
+
+#### Scenario: Append completed trade to log
+- **WHEN** all trade details and PnL are computed
+- **THEN** system SHALL append one row to the CSV file: `symbol,earnings_date,entry_date,exit_date,entry_price,exit_price,qty,pnl,pnl_pct,timestamp`
+
+#### Scenario: Trade log records multiple trades chronologically
+- **WHEN** multiple trades complete over time
+- **THEN** trade log SHALL contain multiple rows (one per trade), appended in chronological order of exit timestamp
+
+### Requirement: Append-only semantics for trade log
+
+The trade log SHALL never be modified or overwritten once written. All operations are append-only to maintain audit trail integrity.
+
+#### Scenario: Append new trade without modifying existing records
+- **WHEN** a new trade completes and is logged
+- **THEN** system SHALL append a new row; no existing rows are modified or deleted
+
+#### Scenario: Trade log grows monotonically
+- **WHEN** multiple trades are recorded over weeks/months
+- **THEN** trade log file size increases monotonically; no truncation or reordering
+
+### Requirement: Human-readable trade log format
+
+Trade log format SHALL be plain CSV, easily imported into analysis tools (pandas, Excel, R) for performance analysis and audit.
+
+#### Scenario: Trade log is queryable via pandas
+- **WHEN** analyst reads the trade log
+- **THEN** they can load it in pandas: `pd.read_csv('output/pead_live_trades.csv')` and analyze by symbol, earnings_date, PnL, hit rate, etc.
+
+#### Scenario: Trade log is readable in Excel
+- **WHEN** trade log is opened in Excel or Google Sheets
+- **THEN** columns are labeled clearly and values are formatted for easy interpretation
+
+### Requirement: Timestamp precision for audit trail
+
+Each trade record SHALL include a precise timestamp (ISO 8601 format with seconds precision, UTC) to enable accurate sequencing and audit of events.
+
+#### Scenario: Timestamp on trade exit
+- **WHEN** exit order executes and trade is logged
+- **THEN** timestamp column SHALL contain the exact exit order execution time in ISO 8601 format (e.g., `2026-04-28T16:00:30Z`)
+
+#### Scenario: Timestamp enables event sequencing
+- **WHEN** multiple trades are logged on the same day
+- **THEN** their timestamps enable precise ordering of events
+
+### Requirement: Record skipped entry events (for analysis)
+
+When an entry is skipped due to negative classifier prediction, the system MAY optionally log a "skipped" record for analysis purposes (to compute true false-negative rate).
+
+#### Scenario: Optional logging of skipped entries
+- **WHEN** classifier predicts negative (pred_label == 0) on T-3
+- **THEN** system MAY append a record to the trade log with fields: symbol, earnings_date, entry_date, exit_date=NULL, entry_price=NULL, exit_price=NULL, qty=0, pnl=0, pnl_pct=0, timestamp=T-3_time, plus a note "skipped_pred=0"
+````
+
+## File: openspec/specs/pre-earnings-features/spec.md
+````markdown
+## MODIFIED Requirements
+
+### Requirement: Build a feature vector per earnings event from T-7 to T-1 daily bars
+The feature module SHALL produce a single feature vector per earnings event by computing summary statistics over a 7-trading-day window ending at a configurable feature anchor derived from `PEAD_ENTRY_OFFSET_DAYS`. For entry offset E, the feature anchor MUST be T-(E+1), and all features MUST use only data available by the anchor close with no forward-looking fields relative to the entry decision time.
+
+#### Scenario: Feature vector produced for each event
+- **WHEN** `build_features(events_df, bars_dict, entry_offset_days=3)` is called with a valid events DataFrame and OHLCV bar data
+- **THEN** the function returns a DataFrame with one row per event and one column per feature, indexed by `earnings_date`
+
+#### Scenario: No forward-looking data used
+- **WHEN** features are computed for an event with earnings date T and entry offset E
+- **THEN** no bar after T-(E+1) appears in the feature computation window
+
+### Requirement: Price drift features (T-7 to T-1)
+The module SHALL compute the following price drift features over the 7-day pre-earnings window ending at the derived anchor date T-(E+1):
+
+- `drift_7d`: Cumulative simple return from the first close in the window to the anchor close.
+- `drift_slope`: Ordinary-least-squares slope of daily closes over the window, normalized by the mean close.
+- `up_day_count`: Number of days where `close > close.shift(1)` in the window.
+- `down_day_count`: Number of days where `close < close.shift(1)` in the window.
+
+#### Scenario: Drift computed correctly
+- **WHEN** close prices over the 7-day window ending at T-(E+1) increase monotonically
+- **THEN** `drift_7d` is positive, `up_day_count` equals 6, and `down_day_count` equals 0
+
+#### Scenario: Slope captures convexity
+- **WHEN** closes accelerate upward over the window ending at T-(E+1)
+- **THEN** `drift_slope` is positive and larger than for a linear price path with the same total drift
+
+### Requirement: Volume pressure features (T-7 to T-1)
+The module SHALL compute:
+
+- `rel_volume_mean`: Mean daily volume over the window ending at T-(E+1) divided by the symbol's 20-day baseline volume computed from the 20 trading days ending immediately before the feature window begins.
+- `down_volume_ratio`: Sum of volume on down days divided by total window volume.
+
+#### Scenario: Volume baseline uses non-overlapping window
+- **WHEN** baseline volume is computed for an event
+- **THEN** no bar from the 7-day feature window ending at T-(E+1) is included in the 20-day baseline
+
+#### Scenario: Down-volume ratio reflects selling pressure
+- **WHEN** all volume in the window occurs on down days
+- **THEN** `down_volume_ratio` equals 1.0
+
+### Requirement: Volatility regime features (T-7 to T-1)
+The module SHALL compute:
+
+- `atr_ratio`: Mean of `(high - low)` over the window ending at T-(E+1) divided by the mean of `(high - low)` for the 20-day baseline period immediately preceding the feature window.
+- `gap_count`: Number of overnight gaps (`abs(open - prev_close) / prev_close > 0.005`) within the window.
+
+#### Scenario: ATR expansion detected
+- **WHEN** intraday ranges expand significantly in the 7-day window ending at T-(E+1) relative to the prior 20-day baseline
+- **THEN** `atr_ratio` is greater than 1.0
+
+### Requirement: Relative-to-market features (T-7 to T-1)
+The module SHALL compute:
+
+- `rel_drift_vs_qqq`: `drift_7d` (symbol) minus the QQQ cumulative return over the same 7-day window ending at T-(E+1), using QQQ bars passed in `bars_dict`.
+
+#### Scenario: Outperformance detected
+- **WHEN** the symbol rises 5% and QQQ rises 2% over the same window ending at T-(E+1)
+- **THEN** `rel_drift_vs_qqq` equals approximately 0.03
+
+### Requirement: Target label computation
+The module SHALL compute the binary target label alongside features:
+
+- `y`: 1 if `open(T) / close(T-1) - 1 > 0.0`, else 0.
+- `gap_return`: Continuous gap return `open(T) / close(T-1) - 1` (stored for evaluation, not used as training label).
+
+#### Scenario: Positive gap labeled correctly
+- **WHEN** T open is higher than T-1 close
+- **THEN** `y = 1` and `gap_return > 0`
+
+#### Scenario: No-gap or negative gap labeled correctly
+- **WHEN** T open equals or is below T-1 close
+- **THEN** `y = 0` and `gap_return <= 0`
+
+### Requirement: Drop events with insufficient bar history
+The module SHALL exclude any event where fewer than 7 valid bars exist in the feature window ending at T-(E+1), and log a warning per dropped event.
+
+#### Scenario: Event dropped on insufficient history
+- **WHEN** only 4 bars are available in the feature window ending at T-(E+1) for an event
+- **THEN** that event is excluded from the output and a warning is logged
 ````
 
 ## File: openspec/specs/risk-analytics/spec.md
@@ -2625,101 +4000,126 @@ schema: spec-driven
 #       - Break tasks into chunks of max 2 hours
 ````
 
-## File: output/.gitkeep
-````
-
-````
-
 ## File: risk/__init__.py
 ````python
 
 ````
 
-## File: risk/metrics.py
+## File: scripts/pead_live_cronjob.py
 ````python
+"""Daily cronjob for PEAD live trading execution.
+
+Runs daily to check entry and exit conditions for configured symbols.
+Entry: T-E open if classifier predicts positive using bars through T-(E+1) close
+Exit: T+1 or later if position is open
+
+Usage:
+    python scripts/pead_live_cronjob.py
+"""
+⋮----
 log = logging.getLogger(__name__)
 ⋮----
-def _to_series(equity_curve: list[tuple] | pd.Series) -> pd.Series
+def setup_logging() -> None
 ⋮----
-"""Normalise equity_curve to a pandas Series indexed by date."""
+"""Configure logging for cronjob."""
+log_path = Path("output") / f"pead_live_cronjob_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.log"
 ⋮----
-"""Annualised Sharpe ratio (risk-free rate = 0).
-
-    Parameters
-    ----------
-    equity_curve : list of (date, value) tuples or pd.Series
-    periods_per_year : int
-        52 for weekly, 252 for daily.
-
-    Returns
-    -------
-    float
-        Annualised Sharpe ratio.  Returns 0.0 if volatility is zero.
-    """
-s = _to_series(equity_curve)
-returns = s.pct_change().dropna()
-std = returns.std()
+root = logging.getLogger()
 ⋮----
-"""Sharpe ratio from a list of returns (no annualization for event-driven data).
-
-    Parameters
-    ----------
-    returns : list of floats or pd.Series
-        Individual returns (e.g., per-trade returns).
-    periods_per_year : int, optional
-        If provided, annualizes the ratio. If None (default), no annualization.
-        Use None for event-driven data (e.g., earnings-driven trades).
-
-    Returns
-    -------
-    float
-        Sharpe ratio.  Returns 0.0 if volatility is zero or data has < 2 points.
-    """
+fmt = logging.Formatter(
 ⋮----
-returns = pd.Series(returns)
+fh = logging.FileHandler(log_path)
 ⋮----
-returns = returns.copy()
+ch = logging.StreamHandler(sys.stdout)
 ⋮----
-mean_ret = returns.mean()
+def run_daily_execution() -> None
 ⋮----
-sharpe = float(mean_ret / std)
+"""Execute daily PEAD live trading logic."""
 ⋮----
-def max_drawdown(equity_curve: list[tuple] | pd.Series) -> float
+feature_anchor_offset_days = config.get_pead_feature_anchor_offset_days()
 ⋮----
-"""Maximum peak-to-trough drawdown as a percentage (negative value).
-
-    Returns
-    -------
-    float
-        e.g. -25.4 means the worst drawdown was -25.4%.
-        Returns 0.0 if the curve is monotonically increasing.
-    """
+state_manager = PEADStateManager(config.PEAD_LIVE_STATE_FILE)
+trade_logger = PEADTradeLogger(config.PEAD_LIVE_LOG_FILE)
+trader = PEADLiveTrader(paper=True, position_size_pct=config.PEAD_LIVE_POSITION_SIZE)
+summary = {
 ⋮----
-rolling_max = s.cummax()
-drawdown = (s - rolling_max) / rolling_max * 100
+# Clean up stale entries
 ⋮----
-"""Calmar ratio: annualised return / abs(max drawdown).
-
-    Returns
-    -------
-    float
-        Calmar ratio.  Returns 0.0 if max drawdown is zero.
-    """
+# Fetch earnings dates for all symbols
 ⋮----
-n = len(s)
+earnings_dates = {}
 ⋮----
-total_return = s.iloc[-1] / s.iloc[0]
-ann_return = total_return ** (periods_per_year / n) - 1
-mdd = max_drawdown(equity_curve)
+earnings_date = get_cached_earnings(symbol, use_cache=True)
 ⋮----
-"""Print a formatted risk summary to stdout."""
+# Process each symbol
 ⋮----
-total_ret = (s.iloc[-1] / s.iloc[0] - 1) * 100
-sr = sharpe_ratio(equity_curve, periods_per_year)
+classifier = PEADClassifierLive(symbol=symbol)
 ⋮----
-cr = calmar_ratio(equity_curve, periods_per_year)
+earnings_date = earnings_dates[symbol]
+timing_dates = get_pead_timing_dates(
+entry_date = timing_dates["entry_date"]
+feature_anchor_date = timing_dates["feature_anchor_date"]
+exit_date = timing_dates["exit_date"]
+today = get_current_market_date()
 ⋮----
-"""Plot the equity curve using matplotlib."""
+# Check for ENTRY (if today is T-E)
+⋮----
+# Check if already traded this event (idempotency)
+⋮----
+# Fetch 7-day OHLCV ending at feature anchor (for T-3 open: T-10 to T-4)
+feature_window_start = calculate_offset_trading_date(feature_anchor_date, -6)
+⋮----
+bars_dict = fetch_bars(
+⋮----
+symbol_index = bars_dict[symbol].index
+symbol_trading_dates = set(pd.to_datetime(symbol_index).strftime("%Y-%m-%d"))
+⋮----
+# Build features for this event
+# Create minimal events DataFrame for this single event
+event_df = pd.DataFrame({
+⋮----
+features = build_features(
+⋮----
+# Extract features for prediction
+features_row = features.iloc[0]
+features_dict = {
+⋮----
+# Classify
+⋮----
+# Place entry order
+entry_result = trader.place_entry_order(symbol)
+⋮----
+# Update state
+⋮----
+# Check for EXIT (if today is T+1 or later)
+⋮----
+position = state_manager.get_position(symbol)
+⋮----
+# Verify this is the same earnings event
+⋮----
+# Get current price for PnL
+exit_price = trader.get_current_price(symbol)
+⋮----
+entry_price = position["entry_price"]
+entry_qty = position["entry_qty"]
+⋮----
+# Place exit order
+exit_result = trader.place_exit_order(symbol, entry_qty)
+⋮----
+# Compute PnL (with transaction costs)
+gross_pnl_pct = (fill_price - entry_price) / entry_price if entry_price > 0 else 0.0
+net_pnl_pct = gross_pnl_pct - (2 * config.PEAD_LIVE_PTC)
+pnl_dollars = net_pnl_pct * entry_price * entry_qty
+⋮----
+# Log trade
+t_plus_1 = calculate_offset_trading_date(earnings_date, 1)
+exit_date_str = str(t_plus_1.date()) if t_plus_1 else str(get_current_market_date())
+⋮----
+# Remove position from state (clean slate)
+⋮----
+# Summary report
+⋮----
+# Clear cache for next execution
 ````
 
 ## File: strategies/__init__.py
@@ -2849,9 +4249,10 @@ def compute_signal(self) -> list[str]
             Top-N symbols ranked by N-day return, best first.
             If all scores are non-positive, returns an empty list (stay in cash).
         """
-end = datetime.today().strftime("%Y-%m-%d")
+now_utc = datetime.now(timezone.utc)
+end = now_utc.strftime("%Y-%m-%d")
 # Fetch extra days to ensure we have enough trading days
-start = (datetime.today() - timedelta(days=self.lookback * 2)).strftime("%Y-%m-%d")
+start = (now_utc - timedelta(days=self.lookback * 2)).strftime("%Y-%m-%d")
 ⋮----
 data = fetch_bars(self.symbols, start, end)
 ⋮----
@@ -2882,7 +4283,7 @@ current = self.get_current_positions()
 strategy_held = {symbol for symbol in current if symbol in self.symbols}
 symbols_for_prices = sorted(target | strategy_held)
 ⋮----
-start = (datetime.today() - timedelta(days=5)).strftime("%Y-%m-%d")
+start = (now_utc - timedelta(days=5)).strftime("%Y-%m-%d")
 price_data = fetch_bars(symbols_for_prices, start, end) if symbols_for_prices else {}
 ⋮----
 # Estimate available capital
@@ -2906,6 +4307,656 @@ price = float(price_data[symbol]["close"].iloc[-1])
 qty = math.floor(allocation / price)
 ````
 
+## File: strategies/pead_backtest.py
+````python
+"""Event-driven backtest for PEAD strategy.
+
+Simulates entry at open(T-E) and exit at the configured T+1 horizon based on
+classifier predictions, with transaction cost modeling.
+"""
+⋮----
+log = logging.getLogger(__name__)
+⋮----
+def _to_naive_midnight(series_or_index: pd.Series | pd.Index) -> pd.Series | pd.DatetimeIndex
+⋮----
+"""Normalize datetime values to tz-naive midnight for key-safe joins."""
+values = pd.to_datetime(series_or_index)
+⋮----
+values = values.dt.tz_localize(None)
+⋮----
+idx = pd.DatetimeIndex(values)
+⋮----
+idx = idx.tz_localize(None)
+⋮----
+"""Return the trading day at a relative offset from anchor, or None if unavailable."""
+⋮----
+anchor_idx = trading_dates.get_loc(anchor)
+shifted_idx = anchor_idx + offset
+⋮----
+class PEADBacktest
+⋮----
+"""Event-driven backtest for Post-Earnings Announcements Drift strategy.
+
+    Simulates offset-driven positions: buy at open(T-E), sell at T+1 open/close.
+    """
+⋮----
+"""Initialize PEAD backtest.
+
+        Parameters
+        ----------
+        predictions_df : pd.DataFrame
+            Walk-forward predictions with columns: pred_label, prob_positive, y, gap_return.
+        bars_dict : dict[str, pd.DataFrame]
+            Dict mapping symbol → OHLCV DataFrame indexed by date.
+        events_df : pd.DataFrame
+            Events DataFrame with columns: earnings_date, t_minus_1.
+        symbol : str
+            The symbol being traded (default "GOOGL").
+        position_size : float
+            Position size as fraction of capital per trade (default 0.05 = 5%).
+        ptc : float
+            Proportional transaction cost per leg (default 0.001 = 0.1%).
+        initial_amount : float
+            Starting capital (default 10000).
+        """
+⋮----
+# Ensure datetime indices
+# Normalize to date-only so timestamps from different sources (e.g. 16:00
+# earnings events vs 00:00 bars) align on calendar day keys.
+⋮----
+def run(self) -> tuple[pd.Series, pd.DataFrame]
+⋮----
+"""Run backtest and return equity curve and trades.
+
+        Returns
+        -------
+        tuple[pd.Series, pd.DataFrame]
+            - equity_curve: Series indexed by earnings_date with account value
+            - trades_df: DataFrame with per-trade records
+        """
+bars = self.bars_dict[self.symbol].copy()
+⋮----
+equity = self.initial_amount
+equity_curve_values = [equity]
+equity_curve_dates = [pd.Timestamp(self.events_df.iloc[0]["earnings_date"]) - pd.Timedelta(days=1)]
+trades = []
+evaluated_events = []
+⋮----
+event_ts = pd.Timestamp(event["earnings_date"])
+t_minus_1_ts = pd.Timestamp(event["t_minus_1"])
+earnings_date = event_ts.date()
+⋮----
+# Check if we have a prediction for this event
+⋮----
+pred = self.predictions_df.loc[event_ts]
+⋮----
+# Derive entry and feature-anchor dates from the trading calendar, not from
+# available bar rows, so missing bars are detected as missing data rather than
+# silently changing the intended offsets.
+entry_ts = get_entry_trading_date(event_ts, self.entry_offset_days)
+⋮----
+feature_anchor_ts = get_feature_anchor_trading_date(event_ts, self.entry_offset_days)
+⋮----
+exit_ts = calculate_offset_trading_date(event_ts, 1)
+⋮----
+entry_price = float(bars.loc[entry_ts, "open"])
+⋮----
+exit_field = "open" if self.exit_mode == "t_plus_1_open" else "close"
+exit_price = float(bars.loc[exit_ts, exit_field])
+⋮----
+gross_return = (exit_price - entry_price) / entry_price if entry_price > 0 else 0.0
+net_return = gross_return - 2 * self.ptc
+⋮----
+# No model-gated trade for predicted-negative events.
+⋮----
+# Calculate position
+position_value = equity * self.position_size
+⋮----
+# PnL
+pnl = position_value * net_return
+⋮----
+# Update equity
+⋮----
+# Record trade
+⋮----
+# Add to equity curve
+⋮----
+# Build equity curve
+⋮----
+# Build trades DataFrame
+⋮----
+benchmark_df = pd.DataFrame(evaluated_events)
+⋮----
+model_df = benchmark_df[benchmark_df["pred_label"] == 1].copy()
+model_avg_gross = model_df["gross_return"].mean() if not model_df.empty else 0.0
+model_avg_net = model_df["net_return"].mean() if not model_df.empty else 0.0
+model_hit_rate = (model_df["gross_return"] > 0).mean() if not model_df.empty else 0.0
+always_buy_avg_gross = benchmark_df["gross_return"].mean()
+always_buy_avg_net = benchmark_df["net_return"].mean()
+always_buy_hit_rate = (benchmark_df["gross_return"] > 0).mean()
+⋮----
+# Compute risk metrics
+# For event-driven PEAD trades, compute Sharpe from actual trade returns only
+# (not the equity curve with flats), without annualization.
+⋮----
+trade_returns = self.trades_df["net_return"].values
+sharpe = sharpe_ratio_from_returns(trade_returns, periods_per_year=None)
+⋮----
+sharpe = 0.0
+````
+
+## File: strategies/pead_classifier_live.py
+````python
+"""PEAD live classifier wrapper.
+
+Uses a frozen trained model for live entry predictions.
+Falls back to training on historical data if no saved model exists.
+"""
+⋮----
+log = logging.getLogger(__name__)
+⋮----
+class PEADClassifierLive
+⋮----
+"""Live PEAD classifier using frozen trained model."""
+FEATURE_COLS = FEATURE_COLS
+⋮----
+def __init__(self, symbol: str, model_path: str | None = None)
+⋮----
+"""Initialize classifier.
+        
+        Parameters
+        ----------
+        symbol : str
+            Symbol whose classifier should be loaded.
+        model_path : str | None
+            Optional explicit model path override.
+        """
+⋮----
+@staticmethod
+    def get_model_path(symbol: str) -> str
+⋮----
+"""Return the on-disk model path for a symbol-specific classifier."""
+⋮----
+def load_classifier(self) -> None
+⋮----
+"""Load pre-trained classifier from pickle file."""
+⋮----
+saved_data = pickle.load(f)
+⋮----
+"""Train classifier on historical data (on-demand fallback).
+        
+        Parameters
+        ----------
+        symbol : str
+            Stock symbol
+        start_date : str
+            Training period start (YYYY-MM-DD)
+        end_date : str
+            Training period end (YYYY-MM-DD)
+        min_train : int
+            Minimum training events
+        """
+⋮----
+# Fetch earnings events
+events_df = fetch_earnings_events(
+⋮----
+# Fetch bars
+bars_dict = fetch_bars(
+⋮----
+# Build features
+features_df = build_features(
+⋮----
+# Train on all historical data
+X = features_df[self.FEATURE_COLS].values
+y = features_df["y"].values
+⋮----
+X_scaled = self.scaler.fit_transform(X)
+⋮----
+# Save model
+⋮----
+def save_classifier(self) -> None
+⋮----
+"""Save trained model to pickle file."""
+⋮----
+def predict_entry(self, features: dict[str, float]) -> tuple[int, float]
+⋮----
+"""Generate entry prediction (pred_label, prob_positive).
+        
+        Parameters
+        ----------
+        features : dict[str, float]
+            Feature dict with keys matching FEATURE_COLS
+            
+        Returns
+        -------
+        tuple[int, float]
+            (pred_label: 0 or 1, prob_positive: probability)
+            
+        Raises
+        ------
+        ValueError
+            If model is not trained
+        """
+⋮----
+# Extract features in correct order
+X = np.array([[features.get(col, 0.0) for col in self.FEATURE_COLS]])
+⋮----
+# Scale
+X_scaled = self.scaler.transform(X)
+⋮----
+# Predict
+⋮----
+probs = self.model.predict_proba(X_scaled)
+prob_positive = probs[0, 1]
+⋮----
+prob_positive = float(self.model.predict(X_scaled)[0])
+⋮----
+pred_label = 1 if prob_positive >= 0.5 else 0
+⋮----
+def ensure_trained(self) -> None
+⋮----
+"""Train and save the symbol model if it is missing on disk."""
+````
+
+## File: strategies/pead_classifier.py
+````python
+"""ML classifier for earnings gap predictions using walk-forward cross-validation.
+
+Implements event-level expanding-window walk-forward validation with logistic
+regression (Phase 1) or configurable classifiers (Phase 2).
+"""
+⋮----
+log = logging.getLogger(__name__)
+⋮----
+FEATURE_COLS = [
+⋮----
+"""Run expanding-window walk-forward prediction.
+
+    Parameters
+    ----------
+    features_df : pd.DataFrame
+        Features DataFrame indexed by earnings_date with columns:
+        drift_7d, drift_slope, up_day_count, down_day_count, rel_volume_mean,
+        down_volume_ratio, atr_ratio, gap_count, rel_drift_vs_qqq, y, gap_return.
+    min_train : int
+        Minimum number of training events before making first prediction.
+    threshold : float
+        Probability threshold for binary prediction (default 0.5).
+    model_cls : type or None
+        Classifier class (e.g., LogisticRegression). Default: LogisticRegression.
+    verbose : bool
+        If True, log feature coefficients after each fold fit.
+
+    Returns
+    -------
+    pd.DataFrame
+        Predictions DataFrame with columns:
+        - earnings_date: event date (index)
+        - prob_positive: predicted probability of positive gap
+        - pred_label: thresholded prediction (0 or 1)
+        - y: actual target label
+        - gap_return: actual gap return
+
+    Notes
+    -----
+    - Predictions only available from position min_train onward.
+    - Earlier events are in-sample training only.
+    """
+features_df = features_df.sort_index().copy()
+⋮----
+model_cls = LogisticRegression
+⋮----
+X = features_df[FEATURE_COLS].values
+y = features_df["y"].values
+gap_returns = features_df["gap_return"].values
+dates = features_df.index
+⋮----
+predictions = []
+⋮----
+# Walk-forward loop
+⋮----
+train_idx = test_idx - 1  # Expanding window: 0..test_idx-1 for training
+train_size = train_idx + 1
+⋮----
+# Ensure we have at least min_train events for training
+⋮----
+# Split data
+⋮----
+X_test = X[test_idx : test_idx + 1]
+⋮----
+# Fit scaler on training data only
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+⋮----
+# Train model
+model = model_cls(random_state=42, max_iter=1000)
+⋮----
+# Log coefficients if verbose
+⋮----
+coefs = model.coef_[0]
+abs_coefs = np.abs(coefs)
+sorted_idx = np.argsort(-abs_coefs)
+⋮----
+# Predict
+⋮----
+probs = model.predict_proba(X_test_scaled)
+prob_positive = probs[0, 1]  # Probability of class 1
+⋮----
+# Fallback for models without predict_proba
+prob_positive = float(model.predict(X_test_scaled)[0])
+⋮----
+pred_label = 1 if prob_positive >= threshold else 0
+⋮----
+result = pd.DataFrame(predictions)
+⋮----
+def evaluate(predictions_df: pd.DataFrame) -> dict[str, Any]
+⋮----
+"""Evaluate classifier predictions.
+
+    Parameters
+    ----------
+    predictions_df : pd.DataFrame
+        Predictions DataFrame with columns: pred_label, y, gap_return.
+
+    Returns
+    -------
+    dict
+        Report with keys:
+        - hit_rate: proportion of correct predictions among all events
+        - baseline_rate: proportion of positive events in full data
+        - n_trades: number of predicted-positive events
+        - avg_gap_return: mean gap return for predicted-positive events
+        - avg_gap_return_negative: mean gap return for predicted-negative events
+        - n_total: total number of events
+    """
+correct = (predictions_df["pred_label"] == predictions_df["y"]).sum()
+hit_rate = correct / len(predictions_df) if len(predictions_df) > 0 else 0.0
+baseline_rate = predictions_df["y"].mean()
+⋮----
+n_trades = (predictions_df["pred_label"] == 1).sum()
+n_total = len(predictions_df)
+⋮----
+avg_gap_return = predictions_df[predictions_df["pred_label"] == 1]["gap_return"].mean()
+⋮----
+avg_gap_return = 0.0
+⋮----
+n_negative_pred = (predictions_df["pred_label"] == 0).sum()
+⋮----
+avg_gap_return_negative = predictions_df[predictions_df["pred_label"] == 0][
+⋮----
+avg_gap_return_negative = 0.0
+⋮----
+def print_eval_report(report: dict[str, Any]) -> None
+⋮----
+"""Print evaluation report to stdout.
+
+    Parameters
+    ----------
+    report : dict
+        Dictionary returned by evaluate().
+    """
+⋮----
+"""Fit a final classifier on the full feature set for later live inference."""
+⋮----
+X_scaled = scaler.fit_transform(X)
+⋮----
+def save_trained_classifier(model: Any, scaler: StandardScaler, model_path: str | Path) -> None
+⋮----
+"""Persist a trained classifier/scaler pair to disk."""
+path = Path(model_path)
+````
+
+## File: strategies/pead_live_trader.py
+````python
+"""PEAD live trader for Alpaca paper trading execution.
+
+Handles order placement (entry/exit), position sizing, and market price queries.
+Extends AlpacaLiveTraderBase for paper trading via Alpaca API.
+"""
+⋮----
+log = logging.getLogger(__name__)
+⋮----
+class PEADLiveTrader(AlpacaLiveTraderBase)
+⋮----
+"""Alpaca-based live trader for PEAD strategy."""
+⋮----
+def __init__(self, paper: bool = True, position_size_pct: float = 0.10)
+⋮----
+"""Initialize PEAD live trader.
+        
+        Parameters
+        ----------
+        paper : bool
+            Must be True (paper trading only)
+        position_size_pct : float
+            Position size as fraction of account equity (default: 0.10 = 10%)
+        """
+⋮----
+self.ptc = 0.001  # 0.1% proportional transaction cost per leg
+⋮----
+def calculate_position_size(self, entry_price: float) -> int
+⋮----
+"""Calculate number of shares to buy.
+        
+        Parameters
+        ----------
+        entry_price : float
+            Entry order fill price
+            
+        Returns
+        -------
+        int
+            Number of shares to buy (rounded down)
+        """
+⋮----
+# Get account equity
+account = self.client.get_account()
+account_equity = float(account.equity)
+⋮----
+# Calculate position value
+position_value = account_equity * self.position_size_pct
+⋮----
+# Calculate shares
+qty = int(position_value / entry_price)
+⋮----
+def place_entry_order(self, symbol: str) -> tuple[str, float, int] | None
+⋮----
+"""Place a market BUY order for entry.
+        
+        Parameters
+        ----------
+        symbol : str
+            Stock symbol
+            
+        Returns
+        -------
+        tuple[str, float, int] or None
+            (order_id, fill_price, qty) if successful, else None
+        """
+⋮----
+# Get current price to calculate position size
+entry_price = self.get_current_price(symbol)
+⋮----
+# Calculate position size
+qty = self.calculate_position_size(entry_price)
+⋮----
+# Place market order
+request = MarketOrderRequest(
+⋮----
+order = self.client.submit_order(request)
+⋮----
+# Capture fill details
+fill_price = float(order.filled_avg_price) if order.filled_avg_price else entry_price
+filled_qty = int(order.filled_qty) if order.filled_qty else qty
+⋮----
+def place_exit_order(self, symbol: str, qty: int) -> tuple[str, float] | None
+⋮----
+"""Place a market SELL order for exit.
+        
+        Parameters
+        ----------
+        symbol : str
+            Stock symbol
+        qty : int
+            Shares to sell
+            
+        Returns
+        -------
+        tuple[str, float] or None
+            (order_id, fill_price) if successful, else None
+        """
+⋮----
+# Get current price
+exit_price = self.get_current_price(symbol)
+⋮----
+fill_price = float(order.filled_avg_price) if order.filled_avg_price else exit_price
+⋮----
+def get_current_price(self, symbol: str) -> float | None
+⋮----
+"""Fetch current market price for a symbol.
+        
+        Parameters
+        ----------
+        symbol : str
+            Stock symbol
+            
+        Returns
+        -------
+        float or None
+            Current market price, or None if unavailable
+        """
+⋮----
+# Use quotes endpoint to get latest price
+quote = self.client.get_latest_trade(symbol)
+⋮----
+price = float(quote.price)
+⋮----
+def get_order_details(self, order_id: str) -> dict | None
+⋮----
+"""Get details of a placed order.
+        
+        Parameters
+        ----------
+        order_id : str
+            Order ID from Alpaca
+            
+        Returns
+        -------
+        dict or None
+            Order details (status, filled_qty, filled_avg_price, etc.), or None on error
+        """
+⋮----
+order = self.client.get_order_by_id(order_id)
+````
+
+## File: tests/test_alpaca_data.py
+````python
+class FetchBarsTests(unittest.TestCase)
+⋮----
+def _make_bars_response(self) -> SimpleNamespace
+⋮----
+index = pd.MultiIndex.from_tuples(
+df = pd.DataFrame(
+⋮----
+@patch("data.alpaca_data._get_client")
+    def test_fetch_bars_uses_inclusive_end_date_for_daily_requests(self, mock_get_client)
+⋮----
+mock_client = mock_get_client.return_value
+⋮----
+request = mock_client.get_stock_bars.call_args.args[0]
+⋮----
+@patch("data.alpaca_data._get_client")
+    def test_fetch_bars_defaults_to_iex_feed(self, mock_get_client)
+⋮----
+@patch("data.alpaca_data._get_client")
+    def test_fetch_bars_honors_feed_override(self, mock_get_client)
+⋮----
+@patch("data.alpaca_data._get_client")
+    def test_fetch_bars_preserves_first_requested_ohlcv_row(self, mock_get_client)
+⋮----
+result = fetch_bars(["NXPI"], start="2026-04-14", end="2026-04-23")
+⋮----
+nxpi = result["NXPI"]
+````
+
+## File: tests/test_pead_backtest.py
+````python
+class PEADBacktestTimingTests(unittest.TestCase)
+⋮----
+def setUp(self) -> None
+⋮----
+dates = pd.bdate_range("2026-01-05", periods=10)
+⋮----
+def test_backtest_uses_open_price_for_offset_entry(self)
+⋮----
+backtest = PEADBacktest(
+⋮----
+def test_backtest_skips_when_feature_anchor_bar_missing(self)
+⋮----
+bars = self.bars.drop(self.bars.index[2])
+````
+
+## File: tests/test_pead_calendar.py
+````python
+class PEADCalendarTests(unittest.TestCase)
+⋮----
+def test_get_trading_dates_excludes_good_friday(self)
+⋮----
+trading_dates = get_trading_dates("2025-04-14", "2025-04-22")
+date_labels = set(trading_dates.strftime("%Y-%m-%d"))
+⋮----
+def test_offset_helpers_skip_good_friday(self)
+⋮----
+earnings_date = "2025-04-22"
+⋮----
+def test_current_market_date_uses_new_york_timezone(self)
+⋮----
+now_utc = datetime(2026, 4, 24, 1, 50, tzinfo=timezone.utc)
+````
+
+## File: tests/test_pead_live_cronjob.py
+````python
+class PEADLiveCronjobTimingTests(unittest.TestCase)
+⋮----
+mock_state_manager = mock_state_manager_cls.return_value
+⋮----
+mock_classifier = mock_classifier_cls.return_value
+⋮----
+event_df = mock_build_features.call_args.kwargs["events_df"]
+````
+
+## File: tests/test_pre_earnings_features.py
+````python
+class BuildFeaturesTimingTests(unittest.TestCase)
+⋮----
+def setUp(self) -> None
+⋮----
+closes = [float(100 + idx) for idx in range(len(self.dates))]
+⋮----
+def test_build_features_uses_t4_anchor_for_t3_open_entry(self)
+⋮----
+features = build_features(
+⋮----
+expected_window = self.bars.iloc[5:12]
+expected_drift = (
+⋮----
+def test_build_features_supports_alternate_offsets_without_schema_changes(self)
+⋮----
+features_t4 = build_features(
+features_t5 = build_features(
+⋮----
+def test_build_features_inference_respects_explicit_feature_anchor(self)
+⋮----
+bars = self.bars.copy()
+⋮----
+qqq = self.qqq.copy()
+⋮----
+events = pd.DataFrame(
+⋮----
+expected_window = bars.iloc[5:12]
+````
+
 ## File: .gitignore
 ````
 *.vscode/*
@@ -2916,65 +4967,6 @@ qty = math.floor(allocation / price)
 output/*
 !output/.gitkeep
 __pycache__/
-````
-
-## File: .repomixignore
-````
-# Dev tooling
-.vscode/
-.idea/
-
-# CI/CD
-.github/
-
-# Git internals
-.git/
-
-# Python cache
-__pycache__/
-*.pyc
-
-# Logs / temp
-logs/
-tmp/
-
-# Dependencies
-node_modules/
-
-# Others
-.env
-LICENSE
-````
-
-## File: config.py
-````python
-# M7 universe
-M7_SYMBOLS = ["AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "META", "TSLA"]
-⋮----
-# Strategy parameters
-LOOKBACK = 60       # N-day return lookback window
-TOP_N = 3           # Number of symbols to hold long
-INITIAL_AMOUNT = 10_000.0
-FTC = 0.0           # Fixed transaction cost per trade
-PTC = 0.0           # Proportional transaction cost per trade
-⋮----
-# Backtest period
-START_DATE = "2020-01-01"
-END_DATE = "2025-12-31"
-⋮----
-# Alpaca credentials
-APCA_API_KEY_ID = os.environ.get("APCA_API_KEY_ID")
-APCA_API_SECRET_KEY = os.environ.get("APCA_API_SECRET_KEY")
-⋮----
-# PEAD strategy parameters (Post-Earnings Announcements Drift)
-PEAD_SYMBOL = "GOOGL"
-PEAD_START_DATE = "2016-01-01"
-PEAD_END_DATE = "2025-12-31"
-PEAD_POSITION_SIZE = 0.10        # 10% of capital per trade
-PEAD_PTC = 0.001                 # 0.1% proportional transaction cost per leg
-PEAD_MIN_TRAIN = 20              # Minimum events for training seed
-PEAD_ENTRY_OFFSET_DAYS = 3       # Enter at T-3 close
-PEAD_EXIT_MODE = "t_plus_1_open"  # Options: t_plus_1_open, t_plus_1_close
 ````
 
 ## File: core/backtest_base.py
@@ -3073,455 +5065,266 @@ if date.weekday() == 0:  # Monday (Mon=0 … Fri=4)
 value = self.get_portfolio_value(bar)
 ````
 
-## File: openspec/specs/live-trader/spec.md
-````markdown
-## ADDED Requirements
-
-### Requirement: Connect to Alpaca paper trading account
-The live trader SHALL connect to Alpaca's paper trading endpoint using `TradingClient(api_key, secret_key, paper=True)` and MUST NOT connect to the live trading endpoint.
-
-#### Scenario: Paper trading connection established
-- **WHEN** `LiveTrader` is instantiated
-- **THEN** it creates a `TradingClient` with `paper=True` and verifies the account is accessible
-
-#### Scenario: Live endpoint connection refused
-- **WHEN** `paper=False` is passed to `TradingClient`
-- **THEN** the `LiveTrader` constructor raises a `ValueError` refusing to proceed
-
-### Requirement: Compute momentum signal using latest market data
-The live trader SHALL fetch the most recent N+1 daily bars for all M7 symbols using `StockHistoricalDataClient`, compute N-day returns, and rank symbols — identical logic to the backtest signal.
-
-#### Scenario: Signal computed from latest data
-- **WHEN** `compute_signal()` is called
-- **THEN** it returns a ranked list of symbols using the same lookback window as the configured backtest
-
-### Requirement: Submit market orders for target portfolio
-The live trader SHALL submit `MarketOrderRequest` buy and sell orders using `TimeInForce.CLS` (Market-on-Close) so that live execution price matches the closing price assumed by the backtest engine. Orders MUST be submitted while the market is open and before the exchange MOC cutoff (3:50 PM ET / 19:50 UTC).
-
-#### Scenario: Buy order submitted as MOC for new holding
-- **WHEN** symbol S enters the top-N but is not currently held
-- **THEN** a MOC buy order (`time_in_force=TimeInForce.CLS`) for `floor(allocation / current_price)` shares of S is submitted
-
-#### Scenario: Sell order submitted as MOC for dropped holding
-- **WHEN** symbol S was held but no longer in top-N
-- **THEN** a MOC sell order (`time_in_force=TimeInForce.CLS`) for all held shares of S is submitted
-
-#### Scenario: No order for unchanged holdings
-- **WHEN** symbol S is in top-N and already held with approximately correct weight
-- **THEN** no order is submitted for S
-
-### Requirement: Weekly rebalance trigger
-The live trader SHALL expose a `rebalance()` method that executes the full signal → order cycle. The caller SHALL invoke this weekly via cron at `45 19 * * 1` (19:45 UTC, 2:45 PM ET) to ensure MOC orders are submitted before the 19:50 UTC exchange cutoff.
-
-#### Scenario: Rebalance completes with MOC orders
-- **WHEN** `rebalance()` is called on a Monday between market open and 19:50 UTC
-- **THEN** all necessary MOC orders are submitted and confirmed via log output
-
-#### Scenario: Market closed handling
-- **WHEN** `rebalance()` is called outside market hours
-- **THEN** a `RuntimeError` is raised and no orders are submitted
-
-### Requirement: Log all order submissions
-The live trader SHALL log each order submission (symbol, side, quantity, order ID) to stdout.
-
-#### Scenario: Order logged on submission
-- **WHEN** any order is submitted
-- **THEN** a line is printed: `[YYYY-MM-DD HH:MM] BUY/SELL <qty> <symbol> → order_id=<id>`
-````
-
-## File: environment.yml
-````yaml
-name: base
-channels:
-  - defaults
-  - conda-forge
-  - https://repo.anaconda.com/pkgs/main
-  - https://repo.anaconda.com/pkgs/r
-dependencies:
-  - _libgcc_mutex=0.1
-  - _openmp_mutex=5.1
-  - aiodns=3.6.1
-  - aiohappyeyeballs=2.6.1
-  - aiohttp=3.13.3
-  - aiosignal=1.4.0
-  - anaconda-anon-usage=0.7.5
-  - annotated-types=0.6.0
-  - anyio=4.12.1
-  - archspec=0.2.5
-  - arrow-cpp=23.0.1
-  - asttokens=3.0.1
-  - attrs=25.4.0
-  - aws-c-auth=0.9.4
-  - aws-c-cal=0.9.13
-  - aws-c-common=0.12.6
-  - aws-c-compression=0.3.1
-  - aws-c-event-stream=0.5.9
-  - aws-c-http=0.10.7
-  - aws-c-io=0.23.3
-  - aws-c-mqtt=0.13.3
-  - aws-c-s3=0.11.3
-  - aws-c-sdkutils=0.2.4
-  - aws-checksums=0.2.8
-  - aws-crt-cpp=0.35.4
-  - aws-sdk-cpp=1.11.720
-  - beautifulsoup4=4.14.3
-  - blas=1.0
-  - boltons=25.0.0
-  - boto3=1.42.34
-  - botocore=1.42.34
-  - brotlicffi=1.2.0.0
-  - bs4=4.14.3
-  - bzip2=1.0.8
-  - c-ares=1.34.6
-  - ca-certificates=2025.12.2
-  - certifi=2026.01.04
-  - cffi=2.0.0
-  - charset-normalizer=3.4.4
-  - click=8.2.1
-  - comm=0.2.3
-  - conda=26.1.1
-  - conda-anaconda-telemetry=0.3.0
-  - conda-anaconda-tos=0.2.2
-  - conda-content-trust=0.2.0
-  - conda-libmamba-solver=26.3.0
-  - conda-package-handling=2.4.0
-  - conda-package-streaming=0.12.0
-  - cpp-expected=1.1.0
-  - cryptography=46.0.5
-  - debugpy=1.8.16
-  - decorator=5.2.1
-  - distro=1.9.0
-  - executing=2.2.1
-  - expat=2.7.4
-  - filelock=3.20.3
-  - fmt=11.2.0
-  - frozendict=2.4.6
-  - frozenlist=1.8.0
-  - fsspec=2026.1.0
-  - gettext=0.25.1
-  - gettext-tools=0.25.1
-  - gflags=2.2.2
-  - glog=0.5.0
-  - greenlet=3.2.4
-  - h11=0.16.0
-  - hf-xet=1.2.0
-  - httpcore=1.0.9
-  - httpx=0.28.1
-  - huggingface_hub=1.3.3
-  - icu=73.1
-  - idna=3.11
-  - intel-openmp=2025.0.0
-  - ipykernel=7.2.0
-  - ipython=9.10.0
-  - ipython_pygments_lexers=1.1.1
-  - jansson=2.14
-  - jedi=0.19.2
-  - jiter=0.12.0
-  - jmespath=1.1.0
-  - joblib=1.5.3
-  - jsonpatch=1.33
-  - jsonpointer=3.0.0
-  - jupyter_client=8.8.0
-  - jupyter_core=5.9.1
-  - langsmith=0.6.0
-  - ld_impl_linux-64=2.44
-  - libabseil=20260107.0
-  - libarchive=3.8.2
-  - libasprintf=0.25.1
-  - libasprintf-devel=0.25.1
-  - libbrotlicommon=1.2.0
-  - libbrotlidec=1.2.0
-  - libbrotlienc=1.2.0
-  - libcurl=8.18.0
-  - libev=4.33
-  - libevent=2.1.12
-  - libexpat=2.7.4
-  - libffi=3.4.4
-  - libgcc=15.2.0
-  - libgcc-ng=15.2.0
-  - libgettextpo=0.25.1
-  - libgettextpo-devel=0.25.1
-  - libgomp=15.2.0
-  - libgrpc=1.78.0
-  - libhwloc=2.12.1
-  - libiconv=1.18
-  - libidn2=2.3.8
-  - libkrb5=1.22.1
-  - libmamba=2.3.2
-  - libmambapy=2.3.2
-  - libnghttp2=1.67.1
-  - libnsl=2.0.0
-  - libprotobuf=6.33.5
-  - libre2-11=2025.11.05
-  - libsodium=1.0.20
-  - libsolv=0.7.30
-  - libssh2=1.11.1
-  - libstdcxx=15.2.0
-  - libstdcxx-ng=15.2.0
-  - libthrift=0.22.0
-  - libunistring=1.3
-  - libuuid=1.41.5
-  - libuv=1.52.0
-  - libxcb=1.17.0
-  - libxml2=2.13.9
-  - libzlib=1.3.1
-  - lmdb=0.9.31
-  - lxml=4.9.3
-  - lz4-c=1.9.4
-  - markdown-it-py=4.0.0
-  - matplotlib-inline=0.2.1
-  - mdurl=0.1.2
-  - menuinst=2.4.2
-  - mkl=2025.0.0
-  - mkl-service=2.5.2
-  - mkl_fft=2.1.1
-  - mkl_random=1.3.0
-  - msgpack-python=1.1.1
-  - multidict=6.7.1
-  - ncurses=6.5
-  - nest-asyncio=1.6.0
-  - nlohmann_json=3.11.2
-  - numpy=2.4.2
-  - numpy-base=2.4.2
-  - openssl=3.5.5
-  - orc=2.2.0
-  - orjson=3.11.7
-  - outcome=1.3.0
-  - packaging=25.0
-  - pandas=3.0.1
-  - parso=0.8.5
-  - pcre2=10.46
-  - pexpect=4.9.0
-  - pip=26.0.1
-  - platformdirs=4.5.0
-  - pluggy=1.5.0
-  - prompt-toolkit=3.0.52
-  - prompt_toolkit=3.0.52
-  - propcache=0.4.1
-  - psutil=7.0.0
-  - pthread-stubs=0.3
-  - ptyprocess=0.7.0
-  - pure_eval=0.2.3
-  - pyarrow=23.0.1
-  - pybind11-abi=5
-  - pycares=4.10.0
-  - pycosat=0.6.6
-  - pycparser=2.23
-  - pydantic=2.12.5
-  - pydantic-core=2.41.5
-  - pygments=2.19.2
-  - pysocks=1.7.1
-  - python=3.12.12
-  - python-dateutil=2.9.0post0
-  - pyyaml=6.0.3
-  - pyzmq=27.1.0
-  - re2=2025.11.05
-  - readline=8.3
-  - regex=2026.2.28
-  - reproc=14.2.4
-  - reproc-cpp=14.2.4
-  - requests=2.32.5
-  - requests-toolbelt=1.0.0
-  - rich=14.2.0
-  - ruamel.yaml=0.18.16
-  - ruamel.yaml.clib=0.2.14
-  - s2n=1.6.2
-  - s3transfer=0.16.0
-  - sacremoses=0.1.1
-  - selenium=4.38.0
-  - setuptools=80.10.2
-  - shellingham=1.5.4
-  - simdjson=3.10.1
-  - six=1.17.0
-  - snappy=1.2.2
-  - sniffio=1.3.1
-  - sortedcontainers=2.4.0
-  - soupsieve=2.5
-  - sqlalchemy=2.0.45
-  - sqlite=3.51.2
-  - stack_data=0.6.3
-  - tbb=2022.3.0
-  - tbb-devel=2022.3.0
-  - tenacity=9.1.2
-  - tk=8.6.15
-  - tornado=6.5.4
-  - tqdm=4.67.3
-  - traitlets=5.14.3
-  - transformers=2.1.1
-  - trio=0.32.0
-  - trio-websocket=0.12.2
-  - truststore=0.10.1
-  - typer-slim=0.20.0
-  - typing-extensions=4.15.0
-  - typing-inspection=0.4.2
-  - typing_extensions=4.15.0
-  - tzdata=2026a
-  - urllib3=2.6.3
-  - utf8proc=2.6.1
-  - uuid-utils=0.12.0
-  - uvloop=0.22.1
-  - wcwidth=0.2.14
-  - websocket-client=1.8.0
-  - wheel=0.46.3
-  - wsproto=1.3.1
-  - xorg-libx11=1.8.12
-  - xorg-libxau=1.0.12
-  - xorg-libxdmcp=1.1.5
-  - xorg-xorgproto=2024.1
-  - xz=5.8.2
-  - yaml=0.2.5
-  - yaml-cpp=0.8.0
-  - yarl=1.22.0
-  - zeromq=4.3.5
-  - zlib=1.3.1
-  - zstandard=0.24.0
-  - zstd=1.5.7
-  - pip:
-      - accelerate==1.5.2
-      - dataclasses-json==0.6.7
-      - finlight-client==0.2.0
-      - httpx-sse==0.4.0
-      - jinja2==3.1.6
-      - langchain==0.3.22
-      - langchain-community==0.3.20
-      - langchain-core==0.3.49
-      - langchain-openai==0.3.11
-      - langchain-postgres==0.0.13
-      - langchain-text-splitters==0.3.7
-      - langgraph==0.3.21
-      - langgraph-checkpoint==2.0.23
-      - langgraph-prebuilt==0.1.7
-      - langgraph-sdk==0.1.60
-      - markupsafe==3.0.2
-      - marshmallow==3.26.1
-      - mpmath==1.3.0
-      - multitasking==0.0.11
-      - mypy-extensions==1.0.0
-      - networkx==3.4.2
-      - nvidia-cublas-cu12==12.4.5.8
-      - nvidia-cuda-cupti-cu12==12.4.127
-      - nvidia-cuda-nvrtc-cu12==12.4.127
-      - nvidia-cuda-runtime-cu12==12.4.127
-      - nvidia-cudnn-cu12==9.1.0.70
-      - nvidia-cufft-cu12==11.2.1.3
-      - nvidia-curand-cu12==10.3.5.147
-      - nvidia-cusolver-cu12==11.6.1.9
-      - nvidia-cusparse-cu12==12.3.1.170
-      - nvidia-cusparselt-cu12==0.6.2
-      - nvidia-nccl-cu12==2.21.5
-      - nvidia-nvjitlink-cu12==12.4.127
-      - nvidia-nvtx-cu12==12.4.127
-      - openai==1.69.0
-      - ormsgpack==1.9.1
-      - peewee==3.17.9
-      - pgvector==0.3.6
-      - pip-review==1.3.0
-      - psycopg==3.2.6
-      - psycopg-pool==3.2.6
-      - pydantic-settings==2.8.1
-      - pyperclip==1.9.0
-      - python-dotenv==1.0.1
-      - style==1.1.0
-      - sympy==1.13.1
-      - tiktoken==0.9.0
-      - torch==2.6.0
-      - triton==3.2.0
-      - typing-inspect==0.9.0
-      - undetected-chromedriver==3.5.5
-      - update==0.0.1
-      - websockets==15.0.1
-      - yfinance==0.2.55
-prefix: /home/chenyang/miniconda3
-````
-
-## File: run.py
+## File: data/alpaca_data.py
 ````python
-"""
-run.py — Entry point for M7 Cross-Sectional Momentum.
+def _resolve_stock_feed() -> str
+⋮----
+"""Resolve stock data feed for Alpaca bars requests.
 
-Usage:
-    conda activate strategy-lab
-    python run.py --mode backtest
-    python run.py --mode live
-    python run.py --mode live --capital-cap 30000
-"""
+    Defaults to IEX so paper/free subscriptions can query recent data.
+    Set APCA_STOCK_FEED or APCA_DATA_FEED to override (e.g., sip, delayed_sip).
+    """
 ⋮----
-def _setup_logging(log_path: str) -> logging.Logger
+def _get_client() -> StockHistoricalDataClient
 ⋮----
-"""Configure the root logger (stdout + file) so all module loggers propagate here."""
+"""Build an authenticated StockHistoricalDataClient from environment variables."""
+api_key = os.environ.get("APCA_API_KEY_ID")
+secret_key = os.environ.get("APCA_API_SECRET_KEY")
 ⋮----
-root = logging.getLogger()
-# Guard: don't add duplicate handlers if called more than once in a session
+"""Fetch historical OHLCV bars for a list of symbols.
+
+    Parameters
+    ----------
+    symbols : list[str]
+        Ticker symbols to fetch.
+    start : str
+        Start date, e.g. '2019-01-01'.
+    end : str
+        End date, e.g. '2024-12-31'.
+    timeframe : TimeFrame
+        Bar timeframe (default: daily).
+
+    Returns
+    -------
+    dict[str, pd.DataFrame]
+        Mapping of symbol → DataFrame with columns [open, high, low, close, volume, return],
+        indexed by date (UTC).
+
+    Raises
+    ------
+    EnvironmentError
+        If Alpaca credentials are not set.
+    ValueError
+        If any symbol has no data in the requested range.
+    """
+client = _get_client()
 ⋮----
-# Suppress noisy third-party debug logs
+start_dt = datetime.strptime(start, "%Y-%m-%d")
+# Alpaca's `end` is exclusive for bar queries; add one day so caller's
+# YYYY-MM-DD end date remains inclusive at day granularity.
+end_dt = datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)
 ⋮----
-fmt = logging.Formatter("[%(asctime)s UTC] %(levelname)s %(name)s — %(message)s",
-fh = logging.FileHandler(log_path)
+request = StockBarsRequest(
 ⋮----
-ch = logging.StreamHandler(sys.stdout)
+bars = client.get_stock_bars(request)
+df_all = bars.df  # MultiIndex: (symbol, timestamp)
 ⋮----
-def _setup_live_logging() -> logging.Logger
+result: dict[str, pd.DataFrame] = {}
 ⋮----
-def _setup_backtest_logging() -> logging.Logger
+df = df_all.loc[symbol].copy()
+df.index = pd.to_datetime(df.index).tz_localize(None)  # strip tz for simplicity
 ⋮----
-ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+# Keep only OHLCV columns
+df = df[["open", "high", "low", "close", "volume"]]
 ⋮----
-def run_backtest() -> None
+# Compute log returns while preserving the first requested OHLCV bar.
+````
+
+## File: openspec/specs/data-layer/spec.md
+````markdown
+## MODIFIED Requirements
+
+### Requirement: Fetch daily OHLCV bars for a symbol universe
+The system SHALL fetch historical daily bar data for a list of symbols using alpaca-py `StockHistoricalDataClient`, returning a dict mapping each symbol to a pandas DataFrame with columns: `open`, `high`, `low`, `close`, `volume` indexed by date. The function SHALL accept an optional `symbols` parameter allowing single-symbol fetches (for example `["QQQ"]`) in addition to the existing multi-symbol use case. Date-range behavior SHALL be inclusive of the requested end date for daily bars, and returned OHLCV rows SHALL be preserved even when first-row derived return fields are NaN.
+
+#### Scenario: Successful multi-symbol fetch
+- **WHEN** `fetch_bars(symbols, start, end, timeframe)` is called with a list of valid symbols and a date range
+- **THEN** the function returns a dict where each key is a symbol string and each value is a DataFrame with OHLCV columns indexed by UTC date
+
+#### Scenario: Single-symbol fetch for benchmark
+- **WHEN** `fetch_bars(["QQQ"], start, end)` is called
+- **THEN** the function returns a dict with a single key `"QQQ"` and a valid OHLCV DataFrame
+
+#### Scenario: Inclusive end date for daily bars
+- **WHEN** `fetch_bars(["NXPI"], "2026-04-14", "2026-04-23")` is called and provider data exists for 2026-04-23
+- **THEN** the returned DataFrame includes the 2026-04-23 daily bar
+
+#### Scenario: Symbol with no data in range
+- **WHEN** a symbol is requested but has no data in the given date range
+- **THEN** the function raises a descriptive `ValueError` identifying the missing symbol
+
+#### Scenario: Credentials loaded from .env
+- **WHEN** `fetch_bars()` is called and a `.env` file with valid credentials exists
+- **THEN** the `StockHistoricalDataClient` authenticates successfully and returns data
+
+#### Scenario: Missing credentials
+- **WHEN** `APCA_API_KEY_ID` or `APCA_API_SECRET_KEY` is not set in the environment
+- **THEN** the function raises a `EnvironmentError` before making any API calls
+
+#### Scenario: Returns column present after fetch
+- **WHEN** `fetch_bars()` returns successfully
+- **THEN** each symbol DataFrame contains a `return` column, and OHLCV rows are not dropped solely because first-row `return` is NaN
+````
+
+## File: risk/metrics.py
+````python
+log = logging.getLogger(__name__)
 ⋮----
-log = _setup_backtest_logging()
+def _to_series(equity_curve: list[tuple] | pd.Series) -> pd.Series
 ⋮----
-data = fetch_bars(
+"""Normalise equity_curve to a pandas Series indexed by date."""
 ⋮----
-strategy = CrossSectionalMomentum(
+"""Annualised Sharpe ratio (risk-free rate = 0).
+
+    Parameters
+    ----------
+    equity_curve : list of (date, value) tuples or pd.Series
+    periods_per_year : int
+        52 for weekly, 252 for daily.
+
+    Returns
+    -------
+    float
+        Annualised Sharpe ratio.  Returns 0.0 if volatility is zero.
+    """
+s = _to_series(equity_curve)
+returns = s.pct_change().dropna()
+std = returns.std()
 ⋮----
-except Exception:  # noqa: BLE001
+"""Sharpe ratio from a list of returns (no annualization for event-driven data).
+
+    Parameters
+    ----------
+    returns : list of floats or pd.Series
+        Individual returns (e.g., per-trade returns).
+    periods_per_year : int, optional
+        If provided, annualizes the ratio. If None (default), no annualization.
+        Use None for event-driven data (e.g., earnings-driven trades).
+
+    Returns
+    -------
+    float
+        Sharpe ratio.  Returns 0.0 if volatility is zero or data has < 2 points.
+    """
 ⋮----
-def run_live_rebalance(capital_cap: float | None = None) -> None
+returns = pd.Series(returns)
 ⋮----
-trader = LiveMomentumTrader(
+returns = returns.copy()
 ⋮----
-def _setup_pead_logging() -> logging.Logger
+mean_ret = returns.mean()
 ⋮----
-def run_pead_backtest() -> None
+sharpe = float(mean_ret / std)
 ⋮----
-"""Run PEAD ML backtest pipeline: earnings → features → walk-forward → backtest."""
-log = _setup_pead_logging()
+def max_drawdown(equity_curve: list[tuple] | pd.Series) -> float
 ⋮----
-# Step 1: Fetch earnings calendar
+"""Maximum peak-to-trough drawdown as a percentage (negative value).
+
+    Returns
+    -------
+    float
+        e.g. -25.4 means the worst drawdown was -25.4%.
+        Returns 0.0 if the curve is monotonically increasing.
+    """
 ⋮----
-events = fetch_earnings_events(
+rolling_max = s.cummax()
+drawdown = (s - rolling_max) / rolling_max * 100
 ⋮----
-timing="AMC",  # After-market-close only
+"""Calmar ratio: annualised return / abs(max drawdown).
+
+    Returns
+    -------
+    float
+        Calmar ratio.  Returns 0.0 if max drawdown is zero.
+    """
 ⋮----
-# Step 2: Fetch daily bars (GOOGL + QQQ)
+n = len(s)
 ⋮----
-bars = fetch_bars(
+total_return = s.iloc[-1] / s.iloc[0]
+ann_return = total_return ** (periods_per_year / n) - 1
+mdd = max_drawdown(equity_curve)
 ⋮----
-# Step 3: Build features
+"""Print a formatted risk summary to stdout."""
 ⋮----
-features = build_features(
+total_ret = (s.iloc[-1] / s.iloc[0] - 1) * 100
+sr = sharpe_ratio(equity_curve, periods_per_year)
 ⋮----
-# Step 4: Walk-forward prediction
+cr = calmar_ratio(equity_curve, periods_per_year)
 ⋮----
-predictions = walk_forward_predict(
+"""Plot the equity curve using matplotlib."""
+````
+
+## File: .repomixignore
+````
+# Dev tooling
+.vscode/
+.idea/
+
+# CI/CD
+.github/
+
+# Git internals
+.git/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Logs / temp
+logs/
+tmp/
+
+# Dependencies
+node_modules/
+
+# Others
+.env
+LICENSE
+output/
+````
+
+## File: config.py
+````python
+def _validate_positive_int(name: str, value: int) -> int
 ⋮----
-# Step 5: Backtest
+# M7 universe
+M7_SYMBOLS = ["AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "META", "TSLA"]
 ⋮----
-backtest = PEADBacktest(
+# Strategy parameters
+LOOKBACK = 60       # N-day return lookback window
+TOP_N = 3           # Number of symbols to hold long
+INITIAL_AMOUNT = 10_000.0
+FTC = 0.0           # Fixed transaction cost per trade
+PTC = 0.0           # Proportional transaction cost per trade
 ⋮----
-# Summary report
+# Backtest period
+START_DATE = "2020-01-01"
+END_DATE = "2025-12-31"
 ⋮----
-report = evaluate(predictions)
+# Alpaca credentials
+APCA_API_KEY_ID = os.environ.get("APCA_API_KEY_ID")
+APCA_API_SECRET_KEY = os.environ.get("APCA_API_SECRET_KEY")
 ⋮----
-date_label = str(date)[:10]
+# PEAD strategy parameters (Post-Earnings Announcements Drift)
+PEAD_SYMBOLS = ["NXPI", "AMD", "AVGO"]
+PEAD_START_DATE = "2016-01-01"
+PEAD_END_DATE = "2025-12-31"
+PEAD_POSITION_SIZE = 0.10        # 10% of capital per trade
+PEAD_PTC = 0.001                 # 0.1% proportional transaction cost per leg
+PEAD_MIN_TRAIN = 20              # Minimum events for training seed
+PEAD_ENTRY_OFFSET_DAYS = _validate_positive_int("PEAD_ENTRY_OFFSET_DAYS", 3)
+PEAD_EXIT_MODE = "t_plus_1_open"  # Options: t_plus_1_open, t_plus_1_close
 ⋮----
-def main() -> None
+def get_pead_feature_anchor_offset_days() -> int
 ⋮----
-parser = argparse.ArgumentParser(description="Run momentum backtest, live paper rebalance, or PEAD ML backtest.")
+"""Return the trading-day offset for the last fully known feature bar."""
 ⋮----
-args = parser.parse_args()
-⋮----
-log = _setup_live_logging()
+# PEAD live trading parameters
+PEAD_LIVE_SYMBOLS = list(PEAD_SYMBOLS)
+PEAD_LIVE_POSITION_SIZE = 0.10   # 10% of account equity per trade
+PEAD_LIVE_PTC = 0.001            # 0.1% proportional transaction cost per leg
+PEAD_LIVE_STATE_FILE = "output/pead_live_state.json"
+PEAD_LIVE_LOG_FILE = "output/pead_live_trades.csv"
+PEAD_LIVE_STALE_DAYS = 30        # Auto-cleanup entries older than this many days
 ````
 
 ## File: core/live_trader_base.py
@@ -3580,6 +5383,118 @@ next_open = getattr(clock, "next_open", None)
 next_open_msg = str(next_open) if next_open is not None else "unknown"
 ````
 
+## File: openspec/specs/live-trader/spec.md
+````markdown
+## MODIFIED Requirements
+
+### Requirement: Weekly rebalance trigger
+The PEAD live execution flow SHALL evaluate entry for each symbol using configurable entry offset `PEAD_ENTRY_OFFSET_DAYS`, where entry date is `T-E` and required feature bars are available by `T-(E+1)` close. The system SHALL NOT attempt entry prediction when the required anchor bar is not yet available, and SHALL log an explicit skip reason.
+
+#### Scenario: Entry evaluated with available anchor bars
+- **WHEN** live execution runs for symbol S and all bars through `T-(E+1)` are available
+- **THEN** prediction is computed and entry order logic is evaluated for date `T-E`
+
+#### Scenario: Entry skipped when anchor bar unavailable
+- **WHEN** live execution runs before the required anchor bar has finalized for symbol S
+- **THEN** no prediction or order is attempted for that symbol and logs record `missing feature-anchor bar`
+
+#### Scenario: Existing order safety behavior preserved
+- **WHEN** live execution runs outside supported order timing or data preconditions
+- **THEN** no new entry order is submitted
+````
+
+## File: run.py
+````python
+"""
+run.py — Entry point for Momentum Backtest, Live Trading, and PEAD Strategies.
+
+Usage:
+    conda activate strategy-lab
+    python run.py --mode backtest                           # M7 momentum backtest
+    python run.py --mode live                               # M7 live paper rebalance
+    python run.py --mode live --capital-cap 30000           # M7 live with capital limit
+    python run.py --mode pead-backtest                      # PEAD earnings prediction backtest
+    python run.py --mode pead-live                          # PEAD daily live trading (cronjob)
+"""
+⋮----
+def _setup_logging(log_path: str) -> logging.Logger
+⋮----
+"""Configure the root logger (stdout + file) so all module loggers propagate here."""
+⋮----
+root = logging.getLogger()
+# Guard: don't add duplicate handlers if called more than once in a session
+⋮----
+# Suppress noisy third-party debug logs
+⋮----
+fmt = logging.Formatter("[%(asctime)s UTC] %(levelname)s %(name)s — %(message)s",
+⋮----
+fh = logging.FileHandler(log_path)
+⋮----
+ch = logging.StreamHandler(sys.stdout)
+⋮----
+def _setup_live_logging() -> logging.Logger
+⋮----
+def _setup_backtest_logging() -> logging.Logger
+⋮----
+ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+⋮----
+def run_backtest() -> None
+⋮----
+log = _setup_backtest_logging()
+⋮----
+data = fetch_bars(
+⋮----
+strategy = CrossSectionalMomentum(
+⋮----
+except Exception:  # noqa: BLE001
+⋮----
+def run_live_rebalance(capital_cap: float | None = None) -> None
+⋮----
+trader = LiveMomentumTrader(
+⋮----
+def _setup_pead_logging() -> logging.Logger
+⋮----
+def run_pead_backtest() -> None
+⋮----
+"""Run PEAD ML backtest pipeline for each configured PEAD symbol."""
+log = _setup_pead_logging()
+⋮----
+feature_anchor_offset_days = config.get_pead_feature_anchor_offset_days()
+⋮----
+events = fetch_earnings_events(
+⋮----
+bars = fetch_bars(
+⋮----
+features = build_features(
+⋮----
+predictions = walk_forward_predict(
+⋮----
+backtest = PEADBacktest(
+⋮----
+model_path = PEADClassifierLive.get_model_path(symbol)
+⋮----
+report = evaluate(predictions)
+⋮----
+date_label = str(date)[:10]
+⋮----
+def _setup_pead_live_logging() -> logging.Logger
+⋮----
+def run_pead_live() -> None
+⋮----
+"""Run PEAD live paper trading daily cronjob."""
+log = _setup_pead_live_logging()
+⋮----
+# Import and run cronjob
+⋮----
+def main() -> None
+⋮----
+parser = argparse.ArgumentParser(description="Run momentum backtest, live paper rebalance, PEAD ML backtest, or PEAD live trading.")
+⋮----
+args = parser.parse_args()
+⋮----
+log = _setup_live_logging()
+````
+
 ## File: scripts/weekly_live_rebalance.py
 ````python
 #!/usr/bin/env python3
@@ -3627,6 +5542,27 @@ trader = LiveMomentumTrader(
 except Exception:  # noqa: BLE001
 ````
 
+## File: environment.yml
+````yaml
+name: strategy-lab
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+  - matplotlib
+  - python-dotenv
+  - pip:
+      - alpaca-py
+      - yfinance
+      - lxml
+````
+
 ## File: README.md
 ````markdown
 # alpaca-lab
@@ -3668,13 +5604,81 @@ python run.py --mode pead-backtest
 This mode runs the full pipeline:
 1. Fetch earnings events from yfinance
 2. Fetch daily bars from Alpaca (GOOGL + QQQ)
-3. Build pre-earnings features
+3. Build pre-earnings features using the configured entry offset
 4. Run walk-forward classification
 5. Backtest event-driven entries/exits
 
 Logs are written to `output/pead_backtest_*.log`.
 
-### PEAD Strategy Findings: Multi-Stock Analysis
+PEAD timing is configurable via `config.PEAD_ENTRY_OFFSET_DAYS`.
+- Default: `3`, which means enter at `T-3 open`
+- Derived feature anchor: `T-(E+1)` close, so the default feature window is `T-10..T-4`
+- Exit timing remains controlled by `config.PEAD_EXIT_MODE`
+
+- PEAD live paper trading (multi-symbol daily cronjob):
+
+```bash
+python run.py --mode pead-live
+```
+
+This mode runs live paper trading execution for configured symbols (NXPI, AMD, AVGO):
+1. Fetch nearest earnings dates for each symbol
+2. Check if today is the configured entry day `T-E` or an exit day `T+1+`
+3. If today is `T-E`, build features only from bars available through `T-(E+1)` close and evaluate the classifier
+4. If T+1+ and position is open: place SELL order (at market price)
+5. Log all trades to CSV, track state in JSON file
+6. Auto-cleanup stale positions after 30 days
+
+Logs are written to `output/pead_live_*.log`.
+State file: `output/pead_live_state.json` (tracks open positions per symbol)
+Trade log: `output/pead_live_trades.csv` (permanent audit trail)
+
+### PEAD Daily Automation (DigitalOcean Droplet)
+
+Set up a weekday cronjob to run PEAD live in a New York pre-open window.
+
+Recommended execution window:
+- Run between `9:20 AM` and `9:28 AM` America/New_York time
+- This is after `T-4` has fully closed and before `T-3` regular session starts
+- A single run at `9:25 AM ET` is a practical default
+
+Example crontab entry (DST-safe via `CRON_TZ`):
+
+```cron
+CRON_TZ=America/New_York
+25 9 * * 1-5 cd /home/chenyang/Git/alpaca-lab && /home/chenyang/miniconda3/envs/strategy-lab/bin/python run.py --mode pead-live >> output/pead_live.log 2>&1
+```
+
+**Timing rationale:**
+- Running in an ET-defined window prevents timezone drift when the server is in Singapore or UTC
+- Supports offset-driven entry-at-open logic because the signal only uses bars available by `T-(E+1)` close
+- If today is `T-3` and the run happens after the US close, skip entry and wait for the next valid event (do not force late execution)
+- For T+1 exits, if cronjob runs before market close, position is exited at market open
+- If cronjob misses T+1 (droplet down), position exits on T+2 when cronjob runs next (handles recovery)
+
+**Testing alternate entry offsets:**
+- Default config-driven run: set `PEAD_ENTRY_OFFSET_DAYS` in `config.py`, then run `python run.py --mode pead-backtest`
+- One-off alternate offset without editing config permanently:
+
+```bash
+conda run -n strategy-lab python -c "import config; config.PEAD_ENTRY_OFFSET_DAYS = 4; import run; run.run_pead_backtest()"
+```
+
+- Typical interpretations:
+	- `3` => enter at `T-3 open`, feature window ends at `T-4 close`
+	- `4` => enter at `T-4 open`, feature window ends at `T-5 close`
+	- `5` => enter at `T-5 open`, feature window ends at `T-6 close`
+
+**Migration note:**
+- PEAD results produced before this timing change used different entry/feature semantics and are not directly comparable to current runs.
+
+**State file and trade log:**
+- State file persists open positions across cronjob runs
+- Idempotency check prevents double-trading the same symbol/earnings-event pair
+- Trade log is append-only for permanent audit trail
+- Auto-cleanup removes stale entries after 30 days
+
+## Weekly Automation (DigitalOcean Droplet)
 
 Comprehensive backtest analysis (2016–2025) reveals **PEAD signal is highly sector-specific**, with semiconductors significantly outperforming mega-cap tech:
 
@@ -3713,7 +5717,8 @@ Comprehensive backtest analysis (2016–2025) reveals **PEAD signal is highly se
 
 #### Testing Methodology
 
-- **Entry**: T-3 close (3 days before earnings announcement)
+- **Entry**: Configurable `T-E open` (default `T-3 open`)
+- **Feature window**: 7 trading days ending at `T-(E+1)` close (default `T-10..T-4`)
 - **Exit**: T+1 open (next trading day open post-earnings)
 - **ML Model**: Walk-forward logistic regression (7-day momentum, volatility, QQQ drift features)
 - **Training seed**: Minimum 20 events per stock
@@ -3741,11 +5746,12 @@ Optional capital cap:
 python scripts/weekly_live_rebalance.py --capital-cap 30000
 ```
 
-Example crontab entry (every Monday pre-close, 19:45 UTC / 2:45 PM ET — 5-min buffer before Alpaca MOC cutoff):
+Example crontab entry (every Monday pre-close, 3:45 PM ET — 5-min buffer before Alpaca MOC cutoff):
 
 ```cron
-45 19 * * 1 cd /home/chenyang/Git/alpaca-lab && /home/chenyang/miniconda3/envs/strategy-lab/bin/python scripts/weekly_live_rebalance.py --capital-cap 30000 >> output/live_rebalance.log 2>&1
+CRON_TZ=America/New_York
+45 15 * * 1 cd /home/chenyang/Git/alpaca-lab && /home/chenyang/miniconda3/envs/strategy-lab/bin/python scripts/weekly_live_rebalance.py --capital-cap 30000 >> output/live_rebalance.log 2>&1
 ```
 
-This timing submits Market-on-Close (MOC) orders, aligning live execution with the closing price the backtest assumes. 19:45 UTC is DST-safe and provides a 5-minute buffer before the NYSE MOC cutoff (19:50 UTC).
+This timing submits Market-on-Close (MOC) orders, aligning live execution with the closing price the backtest assumes. 3:45 PM ET is DST-safe when paired with `CRON_TZ=America/New_York` and provides a 5-minute buffer before the NYSE MOC cutoff (3:50 PM ET).
 ````

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
@@ -183,6 +183,10 @@ class LiveMomentumTrader(AlpacaLiveTraderBase):
     # Signal
     # ------------------------------------------------------------------
 
+    def _last_completed_utc_day(self) -> datetime:
+        """Return the latest fully completed UTC calendar day for daily bars."""
+        return datetime.now(timezone.utc) - timedelta(days=1)
+
     def compute_signal(self) -> list[str]:
         """Fetch latest data and return top-N positive-momentum symbols.
 
@@ -192,9 +196,10 @@ class LiveMomentumTrader(AlpacaLiveTraderBase):
             Top-N symbols ranked by N-day return, best first.
             If all scores are non-positive, returns an empty list (stay in cash).
         """
-        end = datetime.today().strftime("%Y-%m-%d")
-        # Fetch extra days to ensure we have enough trading days
-        start = (datetime.today() - timedelta(days=self.lookback * 2)).strftime("%Y-%m-%d")
+        last_complete_day_utc = self._last_completed_utc_day()
+        end = last_complete_day_utc.strftime("%Y-%m-%d")
+        # Fetch extra days to ensure we have enough trading days.
+        start = (last_complete_day_utc - timedelta(days=self.lookback * 2)).strftime("%Y-%m-%d")
 
         data = fetch_bars(self.symbols, start, end)
 
@@ -241,8 +246,9 @@ class LiveMomentumTrader(AlpacaLiveTraderBase):
         # Used for share sizing and optional capital-cap accounting.
         strategy_held = {symbol for symbol in current if symbol in self.symbols}
         symbols_for_prices = sorted(target | strategy_held)
-        end = datetime.today().strftime("%Y-%m-%d")
-        start = (datetime.today() - timedelta(days=5)).strftime("%Y-%m-%d")
+        last_complete_day_utc = self._last_completed_utc_day()
+        end = last_complete_day_utc.strftime("%Y-%m-%d")
+        start = (last_complete_day_utc - timedelta(days=5)).strftime("%Y-%m-%d")
         price_data = fetch_bars(symbols_for_prices, start, end) if symbols_for_prices else {}
 
         # Estimate available capital

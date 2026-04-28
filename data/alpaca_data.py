@@ -11,6 +11,19 @@ from alpaca.data.timeframe import TimeFrame
 load_dotenv()
 
 
+def _resolve_stock_feed() -> str:
+    """Resolve stock data feed for Alpaca bars requests.
+
+    Defaults to IEX so paper/free subscriptions can query recent data.
+    Set APCA_STOCK_FEED or APCA_DATA_FEED to override (e.g., sip, delayed_sip).
+    """
+    return (
+        os.environ.get("APCA_STOCK_FEED")
+        or os.environ.get("APCA_DATA_FEED")
+        or "iex"
+    ).strip().lower()
+
+
 def _get_client() -> StockHistoricalDataClient:
     """Build an authenticated StockHistoricalDataClient from environment variables."""
     api_key = os.environ.get("APCA_API_KEY_ID")
@@ -58,6 +71,8 @@ def fetch_bars(
     client = _get_client()
 
     start_dt = datetime.strptime(start, "%Y-%m-%d")
+    # Alpaca's `end` is exclusive for bar queries; add one day so caller's
+    # YYYY-MM-DD end date remains inclusive at day granularity.
     end_dt = datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)
 
     request = StockBarsRequest(
@@ -65,6 +80,7 @@ def fetch_bars(
         timeframe=timeframe,
         start=start_dt,
         end=end_dt,
+        feed=_resolve_stock_feed(),
     )
 
     bars = client.get_stock_bars(request)

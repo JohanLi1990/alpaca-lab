@@ -1,4 +1,5 @@
 import unittest
+import os
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -38,6 +39,30 @@ class FetchBarsTests(unittest.TestCase):
         request = mock_client.get_stock_bars.call_args.args[0]
         self.assertEqual(str(request.start.date()), "2026-04-14")
         self.assertEqual(str(request.end.date()), "2026-04-24")
+
+    @patch("data.alpaca_data._get_client")
+    def test_fetch_bars_defaults_to_iex_feed(self, mock_get_client):
+        mock_client = mock_get_client.return_value
+        mock_client.get_stock_bars.return_value = self._make_bars_response()
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("APCA_STOCK_FEED", None)
+            os.environ.pop("APCA_DATA_FEED", None)
+            fetch_bars(["NXPI"], start="2026-04-14", end="2026-04-23")
+
+        request = mock_client.get_stock_bars.call_args.args[0]
+        self.assertEqual(request.feed, "iex")
+
+    @patch("data.alpaca_data._get_client")
+    def test_fetch_bars_honors_feed_override(self, mock_get_client):
+        mock_client = mock_get_client.return_value
+        mock_client.get_stock_bars.return_value = self._make_bars_response()
+
+        with patch.dict(os.environ, {"APCA_STOCK_FEED": "SIP"}, clear=False):
+            fetch_bars(["NXPI"], start="2026-04-14", end="2026-04-23")
+
+        request = mock_client.get_stock_bars.call_args.args[0]
+        self.assertEqual(request.feed, "sip")
 
     @patch("data.alpaca_data._get_client")
     def test_fetch_bars_preserves_first_requested_ohlcv_row(self, mock_get_client):
