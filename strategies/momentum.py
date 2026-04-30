@@ -173,6 +173,8 @@ class LiveMomentumTrader(AlpacaLiveTraderBase):
         max_capital: float | None = None,
     ) -> None:
         super().__init__(paper=True)
+        if max_capital is not None and max_capital <= 0:
+            raise ValueError("max_capital must be > 0 when provided.")
         self.symbols = symbols
         self.lookback = lookback
         self.top_n = top_n
@@ -229,23 +231,27 @@ class LiveMomentumTrader(AlpacaLiveTraderBase):
         self._warn_if_outside_hours()
 
         log.info("--- LiveMomentumTrader: rebalancing ---")
-        target = set(self.compute_signal())
-        if not target:
+        ranked_target = self.compute_signal()
+        target = set(ranked_target)
+        if not ranked_target:
             log.warning("No symbols with positive momentum. Target is 100%% cash.")
-        log.info("Target holdings: %s", sorted(target))
+        log.info("Target holdings (ranked): %s", ranked_target)
 
         current = self.get_current_positions()
         log.info("Current positions: %s", current)
 
-        # Sell dropped holdings
-        for symbol, qty in current.items():
-            if symbol in self.symbols and symbol not in target:
+        strategy_held = {symbol for symbol in current if symbol in self.symbols}
+        retained_held = {symbol for symbol in strategy_held if symbol in target}
+
+        # Sell dropped holdings regardless of unrealized PnL.
+        for symbol in strategy_held:
+            if symbol not in target:
+                qty = current[symbol]
                 self.submit_order(symbol, OrderSide.SELL, math.floor(qty))
 
         # Fetch recent prices for target and currently held universe symbols.
         # Used for share sizing and optional capital-cap accounting.
-        strategy_held = {symbol for symbol in current if symbol in self.symbols}
-        symbols_for_prices = sorted(target | strategy_held)
+        symbols_for_prices = sorted(set(ranked_target) | strategy_held)
         last_complete_day_utc = self._last_completed_utc_day()
         end = last_complete_day_utc.strftime("%Y-%m-%d")
         start = (last_complete_day_utc - timedelta(days=5)).strftime("%Y-%m-%d")
@@ -255,29 +261,60 @@ class LiveMomentumTrader(AlpacaLiveTraderBase):
         account = self.client.get_account()
         available_cash = float(getattr(account, "cash", 0.0) or 0.0)
 
-        deployable_cash = available_cash
-        if self.max_capital is not None:
-            current_value = 0.0
-            for symbol in strategy_held:
+        if self.max_capital is None:
+            deployable_cash = available_cash / 2.0
+            log.info(
+                "Capital cap not provided | available cash=$%,.2f | deployable cash (50%%)=$%,.2f",
+                available_cash,
+                deployable_cash,
+            )
+        else:
+            if self.max_capital >= available_cash:
+                raise ValueError(
+                    "max_capital must be less than current available cash "
+                    f"(${available_cash:,.2f}); got ${self.max_capital:,.2f}."
+                )
+            retained_value = 0.0
+            for symbol in retained_held:
                 if symbol in price_data and not price_data[symbol].empty:
                     px = float(price_data[symbol]["close"].iloc[-1])
-                    current_value += float(current[symbol]) * px
-            remaining_budget = max(self.max_capital - current_value, 0.0)
+                    retained_value += float(current[symbol]) * px
+            remaining_budget = max(self.max_capital - retained_value, 0.0)
             deployable_cash = min(available_cash, remaining_budget)
             log.info(
-                "Capital cap=$%,.2f | current strategy value=$%,.2f | deployable cash=$%,.2f",
-                self.max_capital, current_value, deployable_cash,
+                "Capital cap=$%,.2f | retained strategy value=$%,.2f | available cash=$%,.2f | deployable cash=$%,.2f",
+                self.max_capital,
+                retained_value,
+                available_cash,
+                deployable_cash,
             )
 
-        allocation = deployable_cash / len(target) if target else 0.0
+        # Buy new entries in rank order using remaining cash and remaining slots.
+        new_entries = [symbol for symbol in ranked_target if symbol not in current or current[symbol] == 0]
+        remaining_cash = deployable_cash
+        remaining_slots = len(new_entries)
+        for symbol in new_entries:
+            if remaining_slots <= 0:
+                break
+            if symbol not in price_data or price_data[symbol].empty:
+                log.warning("SKIP BUY %s: no recent price data available.", symbol)
+                remaining_slots -= 1
+                continue
 
-        # Buy new entries
-        for symbol in target:
-            if symbol not in current or current[symbol] == 0:
-                price = float(price_data[symbol]["close"].iloc[-1])
-                qty = math.floor(allocation / price)
-                if qty > 0:
-                    self.submit_order(symbol, OrderSide.BUY, qty)
+            price = float(price_data[symbol]["close"].iloc[-1])
+            per_symbol_budget = remaining_cash / remaining_slots
+            qty = math.floor(per_symbol_budget / price)
+            if qty > 0:
+                self.submit_order(symbol, OrderSide.BUY, qty)
+                remaining_cash -= qty * price
+            else:
+                log.info(
+                    "SKIP BUY %s: insufficient available cash before close (remaining_cash=$%,.2f, price=$%,.2f).",
+                    symbol,
+                    remaining_cash,
+                    price,
+                )
+            remaining_slots -= 1
 
         log.info("--- rebalance complete ---")
 

@@ -41,9 +41,16 @@ def _setup_logging(log_path: Path) -> logging.Logger:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Weekly live rebalance runner.")
+
+    def _positive_float(value: str) -> float:
+        parsed = float(value)
+        if parsed <= 0:
+            raise argparse.ArgumentTypeError("--capital-cap must be > 0")
+        return parsed
+
     parser.add_argument(
         "--capital-cap",
-        type=float,
+        type=_positive_float,
         default=None,
         help="Optional max USD to deploy for strategy positions.",
     )
@@ -87,6 +94,8 @@ def main() -> int:
         log.info("  Top-N      : %d", config.TOP_N)
         if args.capital_cap is not None:
             log.info("  Capital Cap: $%s", f"{args.capital_cap:,.0f}")
+        else:
+            log.info("  Capital Cap: auto (50%% of available cash)")
         log.info("=" * 55)
 
         trader = LiveMomentumTrader(

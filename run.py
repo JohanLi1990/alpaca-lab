@@ -285,6 +285,13 @@ def run_pead_live() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run momentum backtest, live paper rebalance, PEAD ML backtest, or PEAD live trading.")
+
+    def _positive_float(value: str) -> float:
+        parsed = float(value)
+        if parsed <= 0:
+            raise argparse.ArgumentTypeError("--capital-cap must be > 0")
+        return parsed
+
     parser.add_argument(
         "--mode",
         choices=["backtest", "live", "pead-backtest", "pead-live"],
@@ -293,7 +300,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--capital-cap",
-        type=float,
+        type=_positive_float,
         default=None,
         help="Optional max USD to deploy for live mode (example: 30000).",
     )
