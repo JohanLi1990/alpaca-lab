@@ -10,6 +10,29 @@ Activate the project environment first:
 conda activate strategy-lab
 ```
 
+## Account Profiles
+
+This repository uses two Alpaca paper-account credential profiles:
+- `v1`: momentum strategy (live weekly rebalance)
+- `v2`: PEAD strategy (live daily cronjob)
+
+Data-layer calls default to profile `v1`, which keeps backtests and data-only workflows on V1 unless a call site explicitly passes another profile.
+
+Copy `.env.example` to `.env` and set profile credentials:
+
+```bash
+cp .env.example .env
+```
+
+Required environment variables:
+- `V1_APCA_API_KEY_ID`
+- `V1_APCA_API_SECRET_KEY`
+- `V2_APCA_API_KEY_ID`
+- `V2_APCA_API_SECRET_KEY`
+
+Migration note:
+- Previous V2 key name `V2_APCA_API_KEY` has been replaced by `V2_APCA_API_KEY_ID`.
+
 - Backtest:
 
 ```bash

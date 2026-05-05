@@ -36,6 +36,7 @@ class FetchBarsTests(unittest.TestCase):
 
         fetch_bars(["NXPI"], start="2026-04-14", end="2026-04-23")
 
+        mock_get_client.assert_called_once_with(profile="v1")
         request = mock_client.get_stock_bars.call_args.args[0]
         self.assertEqual(str(request.start.date()), "2026-04-14")
         self.assertEqual(str(request.end.date()), "2026-04-24")
@@ -50,6 +51,7 @@ class FetchBarsTests(unittest.TestCase):
             os.environ.pop("APCA_DATA_FEED", None)
             fetch_bars(["NXPI"], start="2026-04-14", end="2026-04-23")
 
+        mock_get_client.assert_called_once_with(profile="v1")
         request = mock_client.get_stock_bars.call_args.args[0]
         self.assertEqual(request.feed, "iex")
 
@@ -61,6 +63,7 @@ class FetchBarsTests(unittest.TestCase):
         with patch.dict(os.environ, {"APCA_STOCK_FEED": "SIP"}, clear=False):
             fetch_bars(["NXPI"], start="2026-04-14", end="2026-04-23")
 
+        mock_get_client.assert_called_once_with(profile="v1")
         request = mock_client.get_stock_bars.call_args.args[0]
         self.assertEqual(request.feed, "sip")
 
@@ -71,10 +74,20 @@ class FetchBarsTests(unittest.TestCase):
 
         result = fetch_bars(["NXPI"], start="2026-04-14", end="2026-04-23")
 
+        mock_get_client.assert_called_once_with(profile="v1")
         nxpi = result["NXPI"]
         self.assertEqual(len(nxpi), 2)
         self.assertTrue(pd.isna(nxpi.iloc[0]["return"]))
         self.assertEqual(nxpi.index[-1].strftime("%Y-%m-%d"), "2026-04-23")
+
+    @patch("data.alpaca_data._get_client")
+    def test_fetch_bars_supports_explicit_v2_profile(self, mock_get_client):
+        mock_client = mock_get_client.return_value
+        mock_client.get_stock_bars.return_value = self._make_bars_response()
+
+        fetch_bars(["NXPI"], start="2026-04-14", end="2026-04-23", profile="v2")
+
+        mock_get_client.assert_called_once_with(profile="v2")
 
 
 if __name__ == "__main__":

@@ -101,12 +101,18 @@ class PEADLiveCronjobTimingTests(unittest.TestCase):
         with patch.object(config, "PEAD_LIVE_SYMBOLS", ["NXPI"]):
             run_daily_execution()
 
+        _trader_cls.assert_called_once_with(
+            paper=True,
+            position_size_pct=config.PEAD_LIVE_POSITION_SIZE,
+            profile="v2",
+        )
         mock_classifier.ensure_trained.assert_called_once_with()
 
         mock_fetch_bars.assert_called_once_with(
             symbols=["NXPI", "QQQ"],
             start="2026-04-14",
             end="2026-04-22",
+            profile="v2",
         )
         self.assertEqual(mock_build_features.call_args.kwargs["entry_offset_days"], config.PEAD_ENTRY_OFFSET_DAYS)
         event_df = mock_build_features.call_args.kwargs["events_df"]

@@ -12,6 +12,8 @@ from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 
+from core.alpaca_credentials import resolve_alpaca_credentials
+
 load_dotenv()
 log = logging.getLogger(__name__)
 
@@ -69,15 +71,9 @@ def _resolve_stock_feed() -> str:
     ).strip().lower()
 
 
-def _get_client() -> StockHistoricalDataClient:
-    """Build an authenticated StockHistoricalDataClient from environment variables."""
-    api_key = os.environ.get("APCA_API_KEY_ID")
-    secret_key = os.environ.get("APCA_API_SECRET_KEY")
-    if not api_key or not secret_key:
-        raise EnvironmentError(
-            "Missing Alpaca credentials. "
-            "Ensure APCA_API_KEY_ID and APCA_API_SECRET_KEY are set in your .env file."
-        )
+def _get_client(profile: str = "v1") -> StockHistoricalDataClient:
+    """Build an authenticated StockHistoricalDataClient for a named profile."""
+    api_key, secret_key = resolve_alpaca_credentials(profile)
     return StockHistoricalDataClient(api_key, secret_key)
 
 
@@ -86,6 +82,7 @@ def fetch_bars(
     start: str,
     end: str,
     timeframe: TimeFrame = TimeFrame.Day,
+    profile: str = "v1",
 ) -> dict[str, pd.DataFrame]:
     """Fetch historical OHLCV bars for a list of symbols.
 
@@ -99,6 +96,8 @@ def fetch_bars(
         End date, e.g. '2024-12-31'.
     timeframe : TimeFrame
         Bar timeframe (default: daily).
+    profile : str
+        Credential profile to use for Alpaca authentication (default: "v1").
 
     Returns
     -------
@@ -113,7 +112,7 @@ def fetch_bars(
     ValueError
         If any symbol has no data in the requested range.
     """
-    client = _get_client()
+    client = _get_client(profile=profile)
 
     start_dt = datetime.strptime(start, "%Y-%m-%d")
     # Alpaca's `end` is exclusive for bar queries; add one day so caller's

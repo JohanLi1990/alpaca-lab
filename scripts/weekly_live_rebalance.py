@@ -118,6 +118,7 @@ def main() -> int:
             top_n=config.TOP_N,
             initial_amount=config.INITIAL_AMOUNT,
             max_capital=args.capital_cap,
+            profile="v1",
         )
         trader.rebalance()
         log.info("Weekly rebalance completed successfully.")

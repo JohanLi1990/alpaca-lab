@@ -23,9 +23,11 @@ PTC = 0.0           # Proportional transaction cost per trade
 START_DATE = "2020-01-01"
 END_DATE = "2025-12-31"
 
-# Alpaca credentials
-APCA_API_KEY_ID = os.environ.get("APCA_API_KEY_ID")
-APCA_API_SECRET_KEY = os.environ.get("APCA_API_SECRET_KEY")
+# Alpaca profile credentials
+V1_APCA_API_KEY_ID = os.environ.get("V1_APCA_API_KEY_ID")
+V1_APCA_API_SECRET_KEY = os.environ.get("V1_APCA_API_SECRET_KEY")
+V2_APCA_API_KEY_ID = os.environ.get("V2_APCA_API_KEY_ID")
+V2_APCA_API_SECRET_KEY = os.environ.get("V2_APCA_API_SECRET_KEY")
 
 # PEAD strategy parameters (Post-Earnings Announcements Drift)
 PEAD_SYMBOLS = ["NXPI", "AMD", "AVGO"]

@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 class PEADLiveTrader(AlpacaLiveTraderBase):
     """Alpaca-based live trader for PEAD strategy."""
 
-    def __init__(self, paper: bool = True, position_size_pct: float = 0.10):
+    def __init__(self, paper: bool = True, position_size_pct: float = 0.10, profile: str = "v2"):
         """Initialize PEAD live trader.
         
         Parameters
@@ -29,8 +29,10 @@ class PEADLiveTrader(AlpacaLiveTraderBase):
             Must be True (paper trading only)
         position_size_pct : float
             Position size as fraction of account equity (default: 0.10 = 10%)
+        profile : str
+            Credential profile to use for Alpaca authentication (default: "v2").
         """
-        super().__init__(paper=paper)
+        super().__init__(paper=paper, profile=profile)
         self.position_size_pct = position_size_pct
         self.ptc = 0.001  # 0.1% proportional transaction cost per leg
 

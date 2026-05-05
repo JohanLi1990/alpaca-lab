@@ -128,6 +128,7 @@ def run_live_rebalance(capital_cap: float | None = None) -> None:
         top_n=config.TOP_N,
         initial_amount=config.INITIAL_AMOUNT,
         max_capital=capital_cap,
+        profile="v1",
     )
     trader.rebalance()
 

@@ -171,8 +171,9 @@ class LiveMomentumTrader(AlpacaLiveTraderBase):
         top_n: int = 3,
         initial_amount: float = 10_000.0,
         max_capital: float | None = None,
+        profile: str = "v1",
     ) -> None:
-        super().__init__(paper=True)
+        super().__init__(paper=True, profile=profile)
         if max_capital is not None and max_capital <= 0:
             raise ValueError("max_capital must be > 0 when provided.")
         self.symbols = symbols
@@ -180,6 +181,7 @@ class LiveMomentumTrader(AlpacaLiveTraderBase):
         self.top_n = top_n
         self.initial_amount = initial_amount
         self.max_capital = max_capital
+        self.profile = profile
 
     # ------------------------------------------------------------------
     # Signal
@@ -203,7 +205,7 @@ class LiveMomentumTrader(AlpacaLiveTraderBase):
         # Fetch extra days to ensure we have enough trading days.
         start = (last_complete_day_utc - timedelta(days=self.lookback * 2)).strftime("%Y-%m-%d")
 
-        data = fetch_bars(self.symbols, start, end)
+        data = fetch_bars(self.symbols, start, end, profile=self.profile)
 
         scores: dict[str, float] = {}
         for symbol, df in data.items():
@@ -255,7 +257,11 @@ class LiveMomentumTrader(AlpacaLiveTraderBase):
         last_complete_day_utc = self._last_completed_utc_day()
         end = last_complete_day_utc.strftime("%Y-%m-%d")
         start = (last_complete_day_utc - timedelta(days=5)).strftime("%Y-%m-%d")
-        price_data = fetch_bars(symbols_for_prices, start, end) if symbols_for_prices else {}
+        price_data = (
+            fetch_bars(symbols_for_prices, start, end, profile=self.profile)
+            if symbols_for_prices
+            else {}
+        )
 
         # Estimate available capital
         account = self.client.get_account()

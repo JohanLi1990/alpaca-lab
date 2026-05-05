@@ -80,7 +80,7 @@ def run_daily_execution() -> None:
     
     state_manager = PEADStateManager(config.PEAD_LIVE_STATE_FILE)
     trade_logger = PEADTradeLogger(config.PEAD_LIVE_LOG_FILE)
-    trader = PEADLiveTrader(paper=True, position_size_pct=config.PEAD_LIVE_POSITION_SIZE)
+    trader = PEADLiveTrader(paper=True, position_size_pct=config.PEAD_LIVE_POSITION_SIZE, profile="v2")
     summary = {
         "entries_fired": [],
         "entries_skipped": [],
@@ -190,6 +190,7 @@ def run_daily_execution() -> None:
                             symbols=[symbol, "QQQ"],
                             start=str(feature_window_start.date()),
                             end=str(feature_anchor_date.date()),
+                            profile="v2",
                         )
 
                         symbol_index = bars_dict[symbol].index
