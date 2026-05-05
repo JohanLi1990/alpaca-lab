@@ -84,10 +84,24 @@ def main() -> int:
 
     try:
         import config
+        from data.alpaca_data import _get_retry_config
         from strategies.momentum import LiveMomentumTrader
+
+        retry_count, retry_delay_sec = _get_retry_config()
+        total_attempts = retry_count + 1
+        worst_case_wait_min = (retry_count * retry_delay_sec) / 60.0
 
         log.info("=" * 55)
         log.info("  Weekly M7 Live Paper Rebalance")
+        log.info("=" * 55)
+        log.info("  Alpaca Data Retry Policy (bars fetch):")
+        log.info(
+            "    retries=%d | delay=%.0fs | total attempts=%d | worst-case added wait=%.1f min",
+            retry_count,
+            retry_delay_sec,
+            total_attempts,
+            worst_case_wait_min,
+        )
         log.info("=" * 55)
         log.info("  Symbols    : %s", ", ".join(config.M7_SYMBOLS))
         log.info("  Lookback   : %d days", config.LOOKBACK)

@@ -179,6 +179,20 @@ Optional capital cap:
 python scripts/weekly_live_rebalance.py --capital-cap 30000
 ```
 
+Alpaca data fetch resilience (used by weekly rebalance bar queries):
+
+- Retries transient connection/timeout errors
+- Default policy: `10` retries with `60s` delay between retries
+- Worst-case added wait before hard failure: about `10` minutes
+- Runtime banner in `output/live_rebalance.log` prints active retry settings each run
+
+Environment overrides:
+
+```bash
+export APCA_DATA_RETRY_COUNT=10
+export APCA_DATA_RETRY_DELAY_SEC=60
+```
+
 Example crontab entry (every Monday pre-close, 3:45 PM ET — 5-min buffer before Alpaca MOC cutoff):
 
 ```cron
