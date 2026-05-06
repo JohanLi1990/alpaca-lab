@@ -136,40 +136,49 @@ conda run -n strategy-lab python -c "import config; config.PEAD_ENTRY_OFFSET_DAY
 
 ## Weekly Automation (DigitalOcean Droplet)
 
-Comprehensive backtest analysis (2016–2025) reveals **PEAD signal is highly sector-specific**, with semiconductors significantly outperforming mega-cap tech:
+Comprehensive symbol sweep run on 2026-05-06 across:
 
-#### Semiconductor Universe (6 tested symbols)
+`NVDA, AMD, AVGO, TSM, MSFT, GOOGL, GOOG, AMZN, PLTR, SNOW, CRWD, PANW, ALAB, CRWV, VRT, ETN, ANET, CRDO, MU, NBIS`
 
-| Symbol | Type | Events | Hit Rate | Avg Return | Sharpe | Uplift vs Always-Buy | Signal |
-|--------|------|--------|----------|------------|--------|----------------------|--------|
-| **NXPI** | Auto/Analog | 16 | 92.31% | 2.66% | 0.87 | **+1.56%** | 🟢 Strongest |
-| **AMD** | Processor | 19 | 75.00% | 4.72% | 0.56 | **+1.90%** | 🟢 Excellent |
-| **AVGO** | Broadband | 18 | 70.00% | 4.84% | 0.45 | **+1.32%** | 🟢 Excellent |
-| **MU** | Memory | 20 | 62.50% | 2.48% | 0.26 | **+0.60%** | 🟡 Good |
-| **QCOM** | Mobile SoC | 17 | 42.86% | 0.06% | 0.01 | **+0.78%** | 🟡 Marginal |
-| **INTC** | Processor | 18 | 41.67% | -1.23% | -0.19 | **+1.05%** | 🟡 Paradoxical* |
+The sweep uses the same PEAD settings as this repo (`T-3` entry, `T+1 open` exit, `min_train=20`, `PTC=0.1%`).
 
-*INTC shows negative returns but still beats always-buy because underlying earnings gap is weaker.
+#### 20-Symbol Sweep Results
 
-#### Mega-Cap Tech (7 tested symbols)
+| Symbol | Events | Hit Rate | Avg Return | Sharpe | Uplift vs Always-Buy | Status | Signal |
+|--------|--------|----------|------------|--------|----------------------|--------|--------|
+| **ANET** | 40 | 66.67% | 3.35% | 0.51 | **+1.29%** | ✅ | 🟢 Strongest (new) |
+| **AMD** | 39 | 66.67% | 3.20% | 0.49 | **+1.68%** | ✅ | 🟢 Excellent |
+| **GOOGL** | 40 | 63.16% | 3.58% | 0.46 | **+0.42%** | ✅ | 🟢 Good |
+| **MSFT** | 40 | 66.67% | 1.40% | 0.34 | **+0.39%** | ✅ | 🟡 Decent |
+| **MU** | 40 | 62.50% | 3.29% | 0.32 | **+0.48%** | ✅ | 🟡 Decent |
+| **PANW** | 37 | 40.00% | 0.58% | 0.24 | **+0.70%** | ✅ | 🟡 Marginal |
+| **NVDA** | 40 | 66.67% | 2.86% | 0.35 | -0.20% | ✅ | 🔴 Negative uplift |
+| **GOOG** | 40 | 57.89% | 2.44% | 0.32 | -0.49% | ✅ | 🔴 Negative uplift |
+| **AVGO** | 39 | 50.00% | 1.41% | 0.15 | -2.06% | ✅ | 🔴 Weak |
+| **AMZN** | 39 | 66.67% | 0.66% | 0.09 | -0.35% | ✅ | 🔴 Weak |
+| **SNOW** | 20 | 0.00% | -2.46% | 0.00 | +0.00% | ✅ | 🔴 Sparse/weak |
+| **CRWD** | 27 | 20.00% | -3.91% | -1.08 | -0.46% | ✅ | 🔴 Weak |
+| **TSM** | 7 | 0.00% | 0.00% | 0.00 | -2.65% | ✅ | 🔴 Insufficient history |
+| **PLTR** | 12 | 0.00% | 0.00% | 0.00 | -0.32% | ✅ | 🔴 Insufficient history |
+| **ALAB** | 6 | 0.00% | 0.00% | 0.00 | -9.36% | ✅ | 🔴 Insufficient history |
+| **CRWV** | 3 | 0.00% | 0.00% | 0.00 | +22.70% | ✅ | 🔴 Too few events |
+| **CRDO** | 16 | 100.00% | 33.44% | 0.00 | +0.00% | ✅ | 🔴 Too few events |
+| VRT | 1 | N/A | N/A | N/A | N/A | ❌ | too few events for walk-forward |
+| ETN | 0 | N/A | N/A | N/A | N/A | ❌ | no AMC events |
+| NBIS | 0 | N/A | N/A | N/A | N/A | ❌ | no AMC events |
 
-| Symbol | Events | Hit Rate | Avg Return | Sharpe | Uplift vs Always-Buy | Signal |
-|--------|--------|----------|------------|--------|----------------------|--------|
-| **GOOGL** | 20 | 56.25% | 1.23% | 0.59 | **+1.03%** | ✓ Only winner |
-| **NVDA** | 20 | 60.00% | 2.56% | 0.31 | -0.58% | ✗ |
-| **MSFT** | 19 | 52.63% | 2.01% | 0.31 | -0.14% | ✗ |
-| **META** | 20 | 56.25% | 1.23% | 0.11 | -0.44% | ✗ |
-| **AMZN** | 19 | 47.06% | 0.87% | 0.07 | -0.02% | ✗ |
-| **AAPL** | 14 | 50.00% | 0.34% | 0.07 | -0.09% | ✗ |
-| **ORCL** | 8 | 37.50% | -0.79% | -0.07 | -3.61% | ✗ Worst |
+#### Portfolio Update
 
-#### Key Insights
+- Existing PEAD portfolio: `NXPI, AMD, AVGO`
+- Added from this sweep (positive uplift + decent Sharpe): **`ANET`, `GOOGL`**
+- Updated PEAD portfolio: **`NXPI, AMD, AVGO, ANET, GOOGL`**
 
-- **Semiconductors dominate**: 6/6 tested show positive uplift vs always-buy (avg +1.04%); mega-caps only 1/7 (avg -0.27%)
-- **Highest hit rates in semicon**: NXPI (92%), AMD (75%), AVGO (70%) vs mega-cap range (37–60%)
-- **Better risk-adjusted returns**: Semiconductor Sharpe ratios (0.26–0.87) exceed mega-cap tech (0.01–0.59)
-- **Sector cyclicality matters**: PEAD drift patterns are predictable in cyclical semicon segment but noise-dominated in mega-cap tech
-- **Recommendation**: Focus PEAD portfolio on **NXPI, AMD, AVGO** for highest signal quality and consistent alpha
+#### Key Notes
+
+- This run used Alpaca `sip` feed (full 2016–2025 history on this account). Using `iex` only can truncate history to ~2020 onward and materially change results.
+- Walk-forward now relaxes `min_train` to available rows when needed (e.g., 20 rows with `min_train=20` uses a 19-row seed), instead of failing hard.
+- Rows with very low event count (e.g., 3-7 events) are not reliable even if uplift appears high.
+- Full machine-readable run output is stored at `output/pead_symbol_sweep_results.json`.
 
 #### Testing Methodology
 
@@ -183,8 +192,8 @@ Comprehensive backtest analysis (2016–2025) reveals **PEAD signal is highly se
 
 #### Failed Symbols
 
-- **TSM**: Only 7 AMC events in history (below 20-event minimum for training)
-- **ADI**: No AMC earnings call data available
+- **No AMC events in selected window**: `ETN, NBIS`
+- **Too few events for walk-forward after feature filtering**: `VRT`
 
 ## Weekly Automation (DigitalOcean Droplet)
 

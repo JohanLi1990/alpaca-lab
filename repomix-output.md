@@ -38,6 +38,7 @@ The content is organized as follows:
 ```
 core/
   __init__.py
+  alpaca_credentials.py
   backtest_base.py
   live_trader_base.py
   pead_state_manager.py
@@ -129,6 +130,30 @@ openspec/
         design.md
         proposal.md
         tasks.md
+      2026-04-30-fix-momentum-live-cash-constrained-moc-rebalance/
+        specs/
+          live-trader/
+            spec.md
+          momentum-strategy/
+            spec.md
+        .openspec.yaml
+        design.md
+        proposal.md
+        tasks.md
+      2026-05-05-account-separation-v1-v2/
+        specs/
+          data-layer/
+            spec.md
+          live-trader/
+            spec.md
+          pead-live-trader/
+            spec.md
+        .openspec.yaml
+        design.md
+        proposal.md
+        tasks.md
+    expand-pead-portfolio-to-10/
+      .openspec.yaml
   specs/
     backtest-engine/
       spec.md
@@ -171,7 +196,10 @@ strategies/
   pead_classifier.py
   pead_live_trader.py
 tests/
+  test_alpaca_credentials.py
   test_alpaca_data.py
+  test_live_trader_profiles.py
+  test_momentum_live_rebalance.py
   test_pead_backtest.py
   test_pead_calendar.py
   test_pead_live_cronjob.py
@@ -186,9 +214,38 @@ run.py
 
 # Files
 
+## File: openspec/changes/expand-pead-portfolio-to-10/.openspec.yaml
+````yaml
+schema: spec-driven
+created: 2026-05-06
+````
+
 ## File: core/__init__.py
 ````python
 
+````
+
+## File: core/alpaca_credentials.py
+````python
+_PROFILE_TO_ENV = {
+⋮----
+def resolve_alpaca_credentials(profile: str) -> tuple[str, str]
+⋮----
+"""Resolve Alpaca API credentials for a named profile.
+
+    Supported profiles are:
+    - v1 -> V1_APCA_API_KEY_ID / V1_APCA_API_SECRET_KEY
+    - v2 -> V2_APCA_API_KEY_ID / V2_APCA_API_SECRET_KEY
+    """
+normalized_profile = profile.strip().lower()
+⋮----
+supported = ", ".join(sorted(_PROFILE_TO_ENV))
+⋮----
+api_key = os.environ.get(api_key_var)
+secret_key = os.environ.get(secret_key_var)
+missing = [name for name, value in ((api_key_var, api_key), (secret_key_var, secret_key)) if not value]
+⋮----
+return api_key, secret_key  # type: ignore[return-value]  # guarded by missing-vars check above
 ````
 
 ## File: core/pead_state_manager.py
@@ -3231,6 +3288,448 @@ We also need entry timing to be strategy-configurable instead of hardcoded so we
 - [x] 7.3 Document migration note that prior backtest results are not directly comparable after timing change
 ````
 
+## File: openspec/changes/archive/2026-04-30-fix-momentum-live-cash-constrained-moc-rebalance/specs/live-trader/spec.md
+````markdown
+## ADDED Requirements
+
+### Requirement: MOC rebalance budget excludes exiting positions
+For live MOC rebalances with a capital cap, the system SHALL compute retained strategy exposure using only currently held symbols that remain in the target set, and SHALL exclude positions already marked for sale from capital-cap accounting.
+
+#### Scenario: Capital cap ignores positions already scheduled to exit
+- **WHEN** the strategy currently holds `AAPL`, `META`, and `NVDA`, `META` is no longer in the target set, and a capital cap is configured
+- **THEN** the rebalance computes retained exposure from `AAPL` and `NVDA` only and does not count `META` against remaining buy budget
+
+### Requirement: Live rebalance logs skipped buys for auditability
+The live trader SHALL write an explicit log entry when a target buy is skipped because pre-close available cash cannot fund at least one whole share.
+
+#### Scenario: Insufficient-cash skip is logged
+- **WHEN** symbol S is a new target entry and the remaining buy budget is less than the reference price of one share of S
+- **THEN** the rebalance submits no buy order for S and logs the symbol, remaining cash, and insufficient-cash skip reason
+````
+
+## File: openspec/changes/archive/2026-04-30-fix-momentum-live-cash-constrained-moc-rebalance/specs/momentum-strategy/spec.md
+````markdown
+## ADDED Requirements
+
+### Requirement: Live rebalance preserves ranked replacement order
+The live momentum rebalance SHALL preserve the momentum-ranked target order returned by the signal, SHALL submit sell orders for dropped strategy holdings regardless of unrealized gain or loss, and SHALL evaluate new replacement buys in that same rank order.
+
+#### Scenario: Dropped symbol is sold even when losing
+- **WHEN** symbol S is currently held by the live momentum strategy, is no longer in the target list, and has a negative unrealized PnL
+- **THEN** the rebalance submits a sell order for S and does not retain it solely because it is at a loss
+
+#### Scenario: New entries are evaluated in momentum rank order
+- **WHEN** the live target ranking is `[AAPL, AMZN, NVDA]`, `AAPL` is already held, and `AMZN` and `NVDA` are new entries
+- **THEN** the rebalance evaluates `AMZN` before `NVDA` when allocating limited buy cash
+
+### Requirement: Live MOC buys use only pre-close available cash
+The live momentum rebalance SHALL compute buy budget only from cash available before the close, SHALL NOT treat same-day MOC sale proceeds as available for new buys, and SHALL size buys only across new target entries.
+
+#### Scenario: Same-day MOC sale proceeds are excluded from buy budget
+- **WHEN** symbol `META` is scheduled for a same-day MOC sell and `AMZN` is a new target entry
+- **THEN** the rebalance computes the `AMZN` buy budget without including expected proceeds from the `META` sell order
+
+#### Scenario: Buy sizing uses only remaining new-entry slots
+- **WHEN** there are two new target entries remaining and the live trader has `$1,000` of pre-close available cash
+- **THEN** the next buy decision is sized from the remaining cash divided by the remaining unfunded new entries rather than by all target holdings
+
+### Requirement: Insufficient-cash buys are skipped explicitly
+The live momentum rebalance SHALL skip a target buy when remaining buy budget cannot fund at least one whole share and SHALL log the skipped symbol and reason explicitly.
+
+#### Scenario: Buy skipped because one share cannot be funded
+- **WHEN** `AMZN` is a new target entry, the remaining buy budget is below the reference price of one share, and no fractional shares are supported
+- **THEN** no buy order is submitted for `AMZN` and logs record that the buy was skipped due to insufficient available cash before the close
+````
+
+## File: openspec/changes/archive/2026-04-30-fix-momentum-live-cash-constrained-moc-rebalance/.openspec.yaml
+````yaml
+schema: spec-driven
+created: 2026-04-30
+````
+
+## File: openspec/changes/archive/2026-04-30-fix-momentum-live-cash-constrained-moc-rebalance/design.md
+````markdown
+## Context
+
+The live momentum trader submits Market-on-Close orders to match the backtest's close-execution assumption, but the current rebalance logic sizes buys from the account cash snapshot without distinguishing between already-available cash and proceeds from same-day MOC sells. As a result, replacement buys can be silently skipped or sized inconsistently, and buy priority across multiple new entries is undefined.
+
+The change is confined to the weekly live momentum rebalance flow. It does not alter the signal definition, the MOC execution choice, or the rule that dropped symbols are sold regardless of unrealized gain or loss.
+
+## Goals / Non-Goals
+
+**Goals:**
+- Keep MOC orders as the live execution model.
+- Define a deterministic rebalance flow that always sells dropped symbols and funds new buys only from cash available before the close.
+- Preserve momentum rank order when multiple new entries compete for limited cash.
+- Make skipped buys and capital-cap behavior explicit in logs.
+
+**Non-Goals:**
+- Changing live execution from MOC to DAY orders.
+- Reusing same-day MOC sale proceeds for new buys.
+- Adding loss-aware sell filters or partial-position resizing.
+- Changing the backtest strategy semantics.
+
+## Decisions
+
+### Decision: Treat same-day MOC sale proceeds as unavailable for buys
+
+The rebalance will submit sells first for dropped symbols, but the buy budget will be computed strictly from currently available account cash. Same-day MOC sale proceeds are excluded because they are not available until the close.
+
+Alternatives considered:
+- Assume sell proceeds are reusable in the same rebalance run. Rejected because it conflicts with MOC timing.
+- Switch to DAY orders so proceeds may become available sooner. Rejected because the change intent is to keep close-price execution.
+
+### Decision: Buy only new entries and process them in signal rank order
+
+The rebalance will preserve the ranked target list returned by the signal and iterate new entries in that order. This gives deterministic behavior when available cash can fund only a subset of replacements.
+
+Alternatives considered:
+- Convert targets to a set and lose ordering. Rejected because buy priority becomes arbitrary.
+- Split cash equally across all targets, including symbols already held. Rejected because unchanged holdings are not resized in this live model.
+
+### Decision: Allocate remaining cash progressively across remaining buy slots
+
+For each new entry in rank order, the trader will compute a per-symbol budget from remaining buy cash divided by remaining unfunded entries. This preserves rank priority without overcommitting the first symbol.
+
+Alternatives considered:
+- Spend all remaining cash on the highest-ranked new entry. Rejected because it over-concentrates replacement buys.
+- Precompute fixed equal allocations before filtering skipped names. Rejected because later entries would not benefit from cash released by earlier skips.
+
+### Decision: Capital-cap accounting excludes positions already marked for sale
+
+When `max_capital` is set, the trader will estimate currently retained exposure using only positions that remain in the target set. Positions already marked for sale will not count against the remaining budget.
+
+Alternatives considered:
+- Count all currently held strategy positions, including outgoing names. Rejected because it artificially suppresses buys during rotations.
+
+### Decision: Log skipped buys explicitly
+
+If remaining buy budget cannot fund at least one share of a target symbol, the trader will skip the order and write an explicit log entry with symbol, reference price, and remaining cash.
+
+Alternatives considered:
+- Silently skip zero-quantity buys. Rejected because it obscures whether skipped entries were intentional or a bug.
+
+## Risks / Trade-offs
+
+- Cash-constrained rotations may leave the portfolio temporarily underinvested -> This is accepted as the correct consequence of keeping MOC and refusing to rely on same-day sale proceeds.
+- Using recent close prices for share sizing can differ slightly from the closing-auction fill -> Existing MOC design already accepts this approximation for order sizing.
+- Rank-priority buys may still leave lower-ranked targets unfunded for a week -> Explicit logging will make these tradeoffs visible for later tuning.
+
+## Migration Plan
+
+1. Update live momentum rebalance logic to preserve ranked targets, compute retained exposure, and process new buys from available cash only.
+2. Add or update focused tests covering sell-first behavior, rank-ordered buys, capital-cap accounting, and explicit skipped-buy logging.
+3. Run the weekly rebalance test slice and any momentum-specific unit tests.
+4. Deploy with no config migration; rollback is limited to restoring the prior rebalance method.
+
+## Open Questions
+
+None.
+````
+
+## File: openspec/changes/archive/2026-04-30-fix-momentum-live-cash-constrained-moc-rebalance/proposal.md
+````markdown
+## Why
+
+The live momentum rebalance currently submits MOC sells and then sizes buys from the account cash snapshot taken before the close. This can skip legitimate replacement buys because same-day MOC sale proceeds are not available yet, while also obscuring the intended buy-priority and skip behavior.
+
+## What Changes
+
+- Clarify that the live momentum rebalance treats same-day MOC sale proceeds as unavailable for new buys.
+- Preserve the existing behavior that dropped symbols are sold regardless of gain or loss.
+- Define buy selection for new target entries using momentum rank order and only currently available cash.
+- Require explicit logging when a target buy is skipped because cash is insufficient to purchase at least one share.
+- Clarify that capital-cap calculations exclude positions already marked for sale and apply only to retained holdings plus new buys.
+
+## Capabilities
+
+### New Capabilities
+
+None.
+
+### Modified Capabilities
+
+- `momentum-strategy`: Change live rebalance behavior so new entries are funded only from currently available cash, prioritized by momentum rank, while dropped holdings are always sold.
+- `live-trader`: Clarify how MOC order timing interacts with rebalance cash availability, buy skipping, and capital-cap accounting.
+
+## Impact
+
+- Affected code: `strategies/momentum.py`, and potentially shared live-order helper logic in `core/live_trader_base.py` if logging or position metadata access needs adjustment.
+- Affected behavior: weekly live M7 rebalance order generation, skipped-buy logging, and capital-cap accounting.
+- No new external dependencies or APIs.
+````
+
+## File: openspec/changes/archive/2026-04-30-fix-momentum-live-cash-constrained-moc-rebalance/tasks.md
+````markdown
+## 1. Rebalance Logic
+
+- [x] 1.1 Update `LiveMomentumTrader.rebalance()` to preserve ranked targets, identify dropped holdings, and submit sells for dropped symbols regardless of unrealized PnL.
+- [x] 1.2 Change live buy-budget calculation to use only currently available cash, excluding same-day MOC sale proceeds and excluding positions marked for sale from capital-cap accounting.
+- [x] 1.3 Implement rank-ordered new-entry buys using remaining cash divided across remaining buy slots, and log explicit insufficient-cash skips when fewer than one whole share can be purchased.
+
+## 2. Focused Validation
+
+- [x] 2.1 Add or update tests covering sell-first behavior, rank-ordered replacement buys, and insufficient-cash skip logging.
+- [x] 2.2 Add or update tests covering capital-cap accounting that ignores positions already scheduled to exit.
+- [x] 2.3 Run the relevant momentum and live-rebalance test slice and confirm the new behavior passes.
+````
+
+## File: openspec/changes/archive/2026-05-05-account-separation-v1-v2/specs/data-layer/spec.md
+````markdown
+## MODIFIED Requirements
+
+### Requirement: Fetch daily OHLCV bars for a symbol universe
+The system SHALL fetch historical daily bar data for a list of symbols using alpaca-py `StockHistoricalDataClient`, returning a dict mapping each symbol to a pandas DataFrame with columns `open`, `high`, `low`, `close`, `volume` indexed by date. The function SHALL support profile-aware authentication and SHALL default to profile `v1` when no profile is provided.
+
+#### Scenario: Successful multi-symbol fetch with default profile
+- **WHEN** `fetch_bars(symbols, start, end, timeframe)` is called without an explicit profile
+- **THEN** the request authenticates with profile `v1` credentials and returns symbol-keyed OHLCV DataFrames
+
+#### Scenario: Successful fetch with explicit v2 profile
+- **WHEN** `fetch_bars(symbols, start, end, timeframe, profile="v2")` is called with valid V2 credentials
+- **THEN** the request authenticates with `V2_APCA_API_KEY_ID` and `V2_APCA_API_SECRET_KEY`
+
+#### Scenario: Backtest data fetch uses v1 by default
+- **WHEN** backtest workflows call `fetch_bars()` without profile overrides
+- **THEN** data-layer authentication uses profile `v1`
+
+#### Scenario: Missing profile credentials
+- **WHEN** required environment variables for the selected profile are not set
+- **THEN** the function raises `EnvironmentError` before making any API call and names the missing profile variables
+
+## ADDED Requirements
+
+### Requirement: Profile-aware data credential naming
+The data layer SHALL resolve credentials from profile-prefixed environment variables using the following names:
+- For `v1`: `V1_APCA_API_KEY_ID`, `V1_APCA_API_SECRET_KEY`
+- For `v2`: `V2_APCA_API_KEY_ID`, `V2_APCA_API_SECRET_KEY`
+
+#### Scenario: V2 key naming is normalized
+- **WHEN** profile `v2` is selected for a data request
+- **THEN** the system reads `V2_APCA_API_KEY_ID` and SHALL NOT require `V2_APCA_API_KEY`
+````
+
+## File: openspec/changes/archive/2026-05-05-account-separation-v1-v2/specs/live-trader/spec.md
+````markdown
+## ADDED Requirements
+
+### Requirement: Profile-aware Alpaca live trader authentication
+The live trader base SHALL authenticate Alpaca trading clients using a required profile identifier for live strategy flows. Supported profiles are `v1` and `v2`, each mapped to profile-prefixed environment variables.
+
+#### Scenario: Momentum live trader uses v1 profile
+- **WHEN** weekly momentum live rebalance initializes its trading client
+- **THEN** it authenticates using `V1_APCA_API_KEY_ID` and `V1_APCA_API_SECRET_KEY`
+
+#### Scenario: Missing live profile credentials fail fast
+- **WHEN** the selected profile credentials are missing at trader initialization time
+- **THEN** initialization fails with an error that identifies the missing profile variable names
+
+### Requirement: Live momentum routing is explicit
+The live momentum execution flow SHALL pass profile `v1` explicitly when constructing the shared live trader base.
+
+#### Scenario: Momentum account routing is deterministic
+- **WHEN** momentum live rebalance is executed from supported entrypoints
+- **THEN** all order placement calls route through a `TradingClient` initialized with profile `v1`
+````
+
+## File: openspec/changes/archive/2026-05-05-account-separation-v1-v2/specs/pead-live-trader/spec.md
+````markdown
+## ADDED Requirements
+
+### Requirement: PEAD live trading uses V2 profile
+The PEAD live trader SHALL initialize Alpaca trading access with profile `v2` so PEAD orders are isolated from momentum account activity.
+
+#### Scenario: PEAD live trader authenticates with V2 credentials
+- **WHEN** PEAD live cronjob creates `PEADLiveTrader`
+- **THEN** the trading client is authenticated with `V2_APCA_API_KEY_ID` and `V2_APCA_API_SECRET_KEY`
+
+### Requirement: PEAD live data fetches are profile-selectable
+PEAD live execution paths that fetch bars SHALL support explicit profile selection. If no profile is provided for general data calls, the system SHALL use default `v1` behavior.
+
+#### Scenario: PEAD live can request v2 market data explicitly
+- **WHEN** PEAD live flow calls the data layer with `profile="v2"`
+- **THEN** the request authenticates using V2 profile credentials
+
+#### Scenario: Default data profile remains v1
+- **WHEN** data fetches are called without explicit profile override
+- **THEN** data layer authentication uses profile `v1`
+````
+
+## File: openspec/changes/archive/2026-05-05-account-separation-v1-v2/.openspec.yaml
+````yaml
+schema: spec-driven
+created: 2026-05-05
+````
+
+## File: openspec/changes/archive/2026-05-05-account-separation-v1-v2/design.md
+````markdown
+## Context
+
+The repository currently initializes Alpaca trading and market-data clients from one shared credential pair. This was sufficient when all strategies used one paper account, but the operating model now requires hard separation: momentum weekly live trading runs on V1, while PEAD live trading runs on V2.
+
+The account split must be explicit in code to avoid accidental cross-account order placement. At the same time, existing backtests should remain simple and continue to use V1 credentials by default for data fetches.
+
+## Goals / Non-Goals
+
+**Goals:**
+- Introduce a profile-aware credential model for Alpaca trading and data clients.
+- Make live strategy account routing explicit and deterministic:
+  - Momentum live -> v1
+  - PEAD live -> v2
+- Normalize V2 variable naming to `V2_APCA_API_KEY_ID` and `V2_APCA_API_SECRET_KEY`.
+- Preserve backward usability for backtests by defaulting data-only fetches to profile v1.
+- Provide precise startup failures when required profile credentials are missing.
+
+**Non-Goals:**
+- No strategy logic changes for signal generation, ranking, or PEAD entry/exit rules.
+- No migration to live-money trading accounts.
+- No change to portfolio sizing formulas or transaction-cost assumptions.
+
+## Decisions
+
+### Decision: Introduce profile-based credential resolution
+Use named profiles (`v1`, `v2`) rather than one global credential pair. Both trading and data client builders resolve keys by profile.
+
+Rationale:
+- Prevents accidental account mixing.
+- Keeps flow ownership obvious and testable.
+- Supports future profile expansion without redesign.
+
+Alternatives considered:
+- Process-level environment variable swapping before each script run. Rejected due to fragility and poor testability.
+- Hardcoded strategy-specific keys. Rejected for security and maintainability reasons.
+
+### Decision: Keep data-layer default profile as v1
+Data fetching APIs default to profile `v1` unless caller explicitly sets another profile.
+
+Rationale:
+- Matches current backtest expectation and user preference.
+- Minimizes call-site churn for non-live workflows.
+
+Alternatives considered:
+- Require explicit profile at every call site. Rejected due to unnecessary verbosity and migration burden.
+
+### Decision: Enforce live routing at strategy entrypoints
+Live momentum constructors/entrypoints pass profile `v1`; PEAD live constructors/entrypoints pass profile `v2`.
+
+Rationale:
+- Puts account selection where execution intent is defined.
+- Prevents accidental fallback to wrong profile.
+
+Alternatives considered:
+- Select profile only in shared base classes by runtime mode. Rejected because mode alone cannot infer strategy ownership.
+
+### Decision: Normalize V2 env names to API_KEY_ID format
+Adopt `V2_APCA_API_KEY_ID` and `V2_APCA_API_SECRET_KEY` for consistency with V1 naming and existing Alpaca naming style.
+
+Rationale:
+- Reduces confusion and avoids conditional naming logic.
+
+Alternatives considered:
+- Keep `V2_APCA_API_KEY` while introducing alias handling. Rejected to avoid long-term ambiguity.
+
+## Risks / Trade-offs
+
+- [Risk] Profile defaults could hide missing explicit routing in new live flows.
+  Mitigation: Require explicit profile in live trader constructors and add tests asserting v1/v2 routing.
+
+- [Risk] Environment migration mistakes (old V2 variable name still present).
+  Mitigation: Add clear startup validation and error text naming the exact missing variables.
+
+- [Risk] PEAD live and PEAD training/fallback data fetches may need different profiles over time.
+  Mitigation: Keep data APIs profile-overridable so call sites can opt into v2 explicitly where needed.
+
+## Migration Plan
+
+1. Add profile-aware credential resolvers for trading and data clients.
+2. Update live strategy constructors and script entrypoints to pass explicit profiles.
+3. Update environment documentation and examples to use `V2_APCA_API_KEY_ID`.
+4. Add/adjust tests for default-v1 data behavior and live routing behavior.
+5. Deploy with both V1 and V2 credentials present and verify account-specific order placement in paper dashboards.
+
+Rollback:
+- Revert to prior shared-credential behavior by removing profile arguments and restoring single-variable resolution.
+- Keep previous .env key names only if rollback requires temporary compatibility.
+
+## Open Questions
+
+- Should PEAD classifier fallback training in live mode continue to use default v1 data or explicitly use v2 for consistency with PEAD live execution?
+- Should we keep temporary compatibility aliases for the legacy `V2_APCA_API_KEY` name during one transition release?
+````
+
+## File: openspec/changes/archive/2026-05-05-account-separation-v1-v2/proposal.md
+````markdown
+## Why
+
+The project now runs two distinct paper accounts: V1 for momentum and V2 for PEAD. Today, live trading and data clients still rely on one shared credential pair, which risks sending orders to the wrong account and makes strategy isolation fragile.
+
+## What Changes
+
+- Introduce profile-aware Alpaca credential resolution for both trading and data clients.
+- Enforce strategy-to-profile mapping in live flows:
+  - Momentum weekly live rebalance uses profile v1.
+  - PEAD live cronjob uses profile v2.
+- Normalize V2 environment variable naming to `V2_APCA_API_KEY_ID` and `V2_APCA_API_SECRET_KEY`.
+- Keep backtests and general data-only fetches on default profile v1 unless explicitly overridden.
+- Add validation and error messages that clearly identify missing profile-specific credentials.
+
+## Capabilities
+
+### New Capabilities
+- None.
+
+### Modified Capabilities
+- `data-layer`: Add profile-aware data client authentication with default v1 behavior for backtests and data-only fetches.
+- `live-trader`: Add profile-aware trading client authentication and require momentum live flow to use v1 credentials.
+- `pead-live-trader`: Require PEAD live flow to use v2 credentials and preserve existing PEAD execution behavior.
+
+## Impact
+
+- Affected code:
+  - Credential loading and client creation in core live trading base and data layer.
+  - Live entrypoints and strategy constructors for momentum and PEAD.
+  - Environment configuration documentation and startup validation.
+  - Tests covering credential resolution and live profile routing.
+- External systems:
+  - Alpaca paper accounts for V1 and V2.
+- Operational impact:
+  - Reduces cross-strategy account contamination risk and makes account ownership explicit by flow.
+````
+
+## File: openspec/changes/archive/2026-05-05-account-separation-v1-v2/tasks.md
+````markdown
+## 1. Credential Profile Foundation
+
+- [x] 1.1 Add a shared credential-resolution utility that maps profile `v1` and `v2` to profile-prefixed environment variables and raises clear errors on missing keys.
+- [x] 1.2 Normalize environment handling to use `V2_APCA_API_KEY_ID` and `V2_APCA_API_SECRET_KEY` for V2.
+- [x] 1.3 Add unit tests for profile resolution success and missing-variable failure paths.
+
+## 2. Data Layer Profile Routing
+
+- [x] 2.1 Update data client construction to accept a profile parameter and default to `v1` when omitted.
+- [x] 2.2 Extend `fetch_bars()` and related internal helpers to pass profile through to authentication.
+- [x] 2.3 Add tests verifying default `v1` data fetch behavior and explicit `v2` profile behavior.
+
+## 3. Live Trader Profile Routing
+
+- [x] 3.1 Update the live trader base class to accept a required profile for live strategy initialization and use profile-specific trading credentials.
+- [x] 3.2 Update `LiveMomentumTrader` and momentum live entrypoints to pass profile `v1` explicitly.
+- [x] 3.3 Update `PEADLiveTrader` and PEAD live entrypoints to pass profile `v2` explicitly.
+- [x] 3.4 Add tests asserting momentum routes to v1 and PEAD routes to v2, including missing-credential fail-fast behavior.
+
+## 4. Backtest Compatibility and Call-Site Audit
+
+- [x] 4.1 Verify backtest and data-only call sites continue to use implicit default `v1` profile without behavior regression.
+- [x] 4.2 Audit PEAD live data-fetch call sites and apply explicit `v2` only where intended, leaving non-live training/backtest flows on default `v1`.
+- [x] 4.3 Confirm no remaining live path depends on legacy shared `APCA_API_KEY_ID` variables.
+
+## 5. Documentation and Operational Readiness
+
+- [x] 5.1 Update `.env` examples and README instructions to document V1/V2 profile variables and account ownership by strategy.
+- [x] 5.2 Add a migration note for renaming V2 key variable from `V2_APCA_API_KEY` to `V2_APCA_API_KEY_ID`.
+- [x] 5.3 Run targeted tests and one dry-run startup check for both live entrypoints to validate profile wiring before deployment.
+````
+
 ## File: openspec/specs/backtest-engine/spec.md
 ````markdown
 ## ADDED Requirements
@@ -3406,55 +3905,6 @@ The module SHALL log sorted feature coefficients (by absolute magnitude) after f
 - **THEN** feature names ranked by absolute coefficient magnitude are logged in descending order
 ````
 
-## File: openspec/specs/momentum-strategy/spec.md
-````markdown
-## ADDED Requirements
-
-### Requirement: Rank symbols by N-day simple return
-The strategy SHALL compute the N-day simple price return for each symbol at each rebalance bar and rank symbols from highest to lowest return.
-
-#### Scenario: Returns computed at each rebalance
-- **WHEN** the rebalance event fires at bar T
-- **THEN** each symbol's score is `(close[T] - close[T-N]) / close[T-N]` where N is the configured lookback window
-
-#### Scenario: Symbols ranked correctly
-- **WHEN** NVDA has return=0.42, META=0.28, AAPL=0.05, others negative
-- **THEN** ranking is NVDA(1), META(2), AAPL(3), ... in descending order
-
-### Requirement: Go long top-N symbols equal-weight
-The strategy SHALL enter long positions in the top `top_n` ranked symbols, allocating equal weight (1/top_n of available capital) to each. Symbols outside the top-N SHALL be sold if currently held.
-
-#### Scenario: Equal-weight allocation
-- **WHEN** top_n=3 and available capital is $9000
-- **THEN** each of the 3 selected symbols receives $3000 of capital
-
-#### Scenario: Dropped symbol is sold
-- **WHEN** symbol S was in the top-N at the previous rebalance but is no longer in the top-N at the current rebalance
-- **THEN** all units of S are sold at the current closing price
-
-#### Scenario: New symbol enters top-N
-- **WHEN** symbol S enters the top-N at the current rebalance and is not currently held
-- **THEN** a buy order is placed for S using its equal-weight capital allocation
-
-### Requirement: Rebalance only on weekly frequency
-The strategy SHALL only execute rebalance logic on the last trading day of each calendar week (Friday, or Thursday if Friday is a holiday).
-
-#### Scenario: Rebalance fires on Friday
-- **WHEN** the current bar's date is a Friday
-- **THEN** the full ranking and rebalance logic executes
-
-#### Scenario: No trades on non-rebalance days
-- **WHEN** the current bar's date is Monday through Thursday
-- **THEN** no orders are placed and portfolio state is unchanged
-
-### Requirement: Configurable parameters
-The strategy SHALL accept `lookback` (int, days), `top_n` (int), `symbols` (list of str), `start` (str date), `end` (str date), `initial_amount` (float), `ftc` (float), and `ptc` (float) as constructor parameters.
-
-#### Scenario: Default parameters produce valid backtest
-- **WHEN** strategy is instantiated with symbols=M7, lookback=60, top_n=3, initial_amount=10000
-- **THEN** backtest runs without error over the configured date range
-````
-
 ## File: openspec/specs/pead-backtest/spec.md
 ````markdown
 ## MODIFIED Requirements
@@ -3522,123 +3972,6 @@ The system SHALL log the effective entry offset, derived feature anchor offset, 
 #### Scenario: Effective timing is logged
 - **WHEN** a PEAD backtest or live run starts
 - **THEN** logs include `entry_offset_days`, `feature_anchor_offset_days`, and configured exit mode
-````
-
-## File: openspec/specs/pead-live-trader/spec.md
-````markdown
-## ADDED Requirements
-
-### Requirement: Daily cronjob executes PEAD trading logic
-
-The system SHALL run PEAD live execution as a daily cronjob. At each execution, the system SHALL:
-1. Check each symbol (NXPI, AMD, AVGO) to determine if today is T-3 or T+1+ relative to the symbol's nearest upcoming earnings date
-2. Execute entry orders for any symbol at T-3, provided a positive classifier prediction exists
-3. Execute exit orders for any symbol at T+1 or later, if a position is currently open
-4. Log all order execution results
-
-#### Scenario: Entry trigger on T-3
-- **WHEN** cronjob runs on a day that is T-3 for a symbol's nearest earnings event AND classifier predicts positive (pred_label == 1)
-- **THEN** system SHALL fetch 7-day OHLCV data (T-9 through T-3), place a market BUY order, record entry state with entry_date/entry_price/entry_qty
-
-#### Scenario: Entry skipped on negative prediction
-- **WHEN** cronjob runs on T-3 for a symbol AND classifier predicts negative (pred_label == 0)
-- **THEN** system SHALL not place an order; position entry is skipped for this event
-
-#### Scenario: Exit trigger on T+1 or later
-- **WHEN** cronjob runs on a day that is T+1 or later for a symbol's current open earnings event AND a position is currently open
-- **THEN** system SHALL place a market SELL order at current market price (immediate execution), log exit price and PnL, clear state entry for that symbol
-
-#### Scenario: Double-trade prevention
-- **WHEN** cronjob runs on T-3 for a symbol AND state file already shows an open position for this symbol and the same earnings_date
-- **THEN** system SHALL not place another BUY order; only one entry per symbol per earnings event
-
-#### Scenario: Missed cronjob recovery
-- **WHEN** cronjob does not run on T+1 (e.g., droplet downtime), but runs on T+2 or later AND a position is still open
-- **THEN** system SHALL execute the exit order immediately on the first available execution, preventing positions from lingering past intended exit date
-
-### Requirement: Classifier integration for entry prediction
-
-The system SHALL use a pre-trained, frozen classifier to generate predictions for live trades. For each symbol on T-3:
-1. Load the latest trained classifier (no retraining during live cycle)
-2. Extract 7-day pre-earnings features (T-9 through T-3)
-3. Generate pred_label (0 or 1) and prob_positive probability
-4. Use pred_label to gate entry: only execute if pred_label == 1
-
-#### Scenario: Load classifier
-- **WHEN** daily cronjob initializes
-- **THEN** system SHALL load the most recent trained classifier model
-
-#### Scenario: Predict for T-3 features
-- **WHEN** on T-3 execution and need to decide whether to enter
-- **THEN** system SHALL extract 7-day momentum/volatility/QQQ correlation features, invoke classifier.predict(), receive pred_label and prob_positive
-
-#### Scenario: Entry gated on positive prediction
-- **WHEN** classifier returns pred_label == 1
-- **THEN** entry order proceeds to execution
-
-#### Scenario: Entry blocked on negative prediction
-- **WHEN** classifier returns pred_label == 0
-- **THEN** entry order is not placed; day is recorded as "skipped"
-
-### Requirement: Market order execution with Alpaca API
-
-The system SHALL submit market orders via Alpaca's trading API (paper trading account). For each order:
-1. Calculate position size as `(account_equity * 0.10) / current_price` for entry orders
-2. Submit market order (buy on entry, sell on exit) with time_in_force = Day
-3. Capture order ID, fill price, and fill timestamp
-4. Handle errors (insufficient buying power, API rate limits) by logging and deferring to next cronjob run
-
-#### Scenario: Calculate entry position size
-- **WHEN** entry order is ready to submit
-- **THEN** system SHALL read account equity, multiply by 0.10 (10% position size), divide by T-3 close price to get share count, round down to integer
-
-#### Scenario: Submit entry market order
-- **WHEN** position size is calculated
-- **THEN** system SHALL submit market BUY order via AlpacaLiveTraderBase, capturing order_id and requested fill price
-
-#### Scenario: Submit exit market order
-- **WHEN** T+1+ exit is triggered
-- **THEN** system SHALL submit market SELL order via AlpacaLiveTraderBase for the full open position quantity, capturing order_id and fill price
-
-#### Scenario: Handle Alpaca errors gracefully
-- **WHEN** order submission fails (e.g., API down, insufficient buying power)
-- **THEN** system SHALL log error, not crash, continue to next symbol, retry on next cronjob run
-
-### Requirement: Earnings date fetching and T-N offset calculation
-
-The system SHALL fetch the nearest upcoming earnings date for each symbol using yfinance, then calculate T-3 and T+1 offsets accounting for NYSE trading calendar (exclude weekends, US federal holidays).
-
-#### Scenario: Fetch nearest earnings date
-- **WHEN** cronjob runs
-- **THEN** system SHALL call fetch_earnings_events(symbol) to retrieve the next upcoming earnings date for each symbol (NXPI, AMD, AVGO)
-
-#### Scenario: Calculate T-3 from earnings date
-- **WHEN** earnings_date is known
-- **THEN** system SHALL find the trading day exactly 3 trading days before earnings_date (skip weekends and US holidays), call this T-3
-
-#### Scenario: Calculate T+1 from earnings date
-- **WHEN** earnings_date is known
-- **THEN** system SHALL find the trading day exactly 1 trading day after earnings_date, call this T+1
-
-#### Scenario: Handle holiday edge cases
-- **WHEN** earnings_date or T-3/T+1 calculation crosses a US federal holiday or weekend
-- **THEN** system SHALL skip non-trading days and use NYSE trading calendar to find the correct trading day offset
-
-### Requirement: PnL calculation at exit
-
-The system SHALL calculate and record the profit/loss for each trade at exit time using actual execution prices.
-
-#### Scenario: Calculate net PnL in dollars
-- **WHEN** exit order executes on T+1
-- **THEN** system SHALL compute: pnl_dollars = (exit_price - entry_price) * qty_shares - (2 * 0.001 * position_value) [accounting for entry and exit transaction costs of 0.1% each]
-
-#### Scenario: Calculate PnL percentage
-- **WHEN** exit order executes
-- **THEN** system SHALL compute: pnl_pct = pnl_dollars / (entry_price * qty_shares)
-
-#### Scenario: Record PnL in trade log
-- **WHEN** exit order executes with known entry_price, exit_price, and qty
-- **THEN** system SHALL append pnl_dollars and pnl_pct to the trade log entry
 ````
 
 ## File: openspec/specs/pead-state-manager/spec.md
@@ -4005,306 +4338,9 @@ schema: spec-driven
 
 ````
 
-## File: scripts/pead_live_cronjob.py
-````python
-"""Daily cronjob for PEAD live trading execution.
-
-Runs daily to check entry and exit conditions for configured symbols.
-Entry: T-E open if classifier predicts positive using bars through T-(E+1) close
-Exit: T+1 or later if position is open
-
-Usage:
-    python scripts/pead_live_cronjob.py
-"""
-⋮----
-log = logging.getLogger(__name__)
-⋮----
-def setup_logging() -> None
-⋮----
-"""Configure logging for cronjob."""
-log_path = Path("output") / f"pead_live_cronjob_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.log"
-⋮----
-root = logging.getLogger()
-⋮----
-fmt = logging.Formatter(
-⋮----
-fh = logging.FileHandler(log_path)
-⋮----
-ch = logging.StreamHandler(sys.stdout)
-⋮----
-def run_daily_execution() -> None
-⋮----
-"""Execute daily PEAD live trading logic."""
-⋮----
-feature_anchor_offset_days = config.get_pead_feature_anchor_offset_days()
-⋮----
-state_manager = PEADStateManager(config.PEAD_LIVE_STATE_FILE)
-trade_logger = PEADTradeLogger(config.PEAD_LIVE_LOG_FILE)
-trader = PEADLiveTrader(paper=True, position_size_pct=config.PEAD_LIVE_POSITION_SIZE)
-summary = {
-⋮----
-# Clean up stale entries
-⋮----
-# Fetch earnings dates for all symbols
-⋮----
-earnings_dates = {}
-⋮----
-earnings_date = get_cached_earnings(symbol, use_cache=True)
-⋮----
-# Process each symbol
-⋮----
-classifier = PEADClassifierLive(symbol=symbol)
-⋮----
-earnings_date = earnings_dates[symbol]
-timing_dates = get_pead_timing_dates(
-entry_date = timing_dates["entry_date"]
-feature_anchor_date = timing_dates["feature_anchor_date"]
-exit_date = timing_dates["exit_date"]
-today = get_current_market_date()
-⋮----
-# Check for ENTRY (if today is T-E)
-⋮----
-# Check if already traded this event (idempotency)
-⋮----
-# Fetch 7-day OHLCV ending at feature anchor (for T-3 open: T-10 to T-4)
-feature_window_start = calculate_offset_trading_date(feature_anchor_date, -6)
-⋮----
-bars_dict = fetch_bars(
-⋮----
-symbol_index = bars_dict[symbol].index
-symbol_trading_dates = set(pd.to_datetime(symbol_index).strftime("%Y-%m-%d"))
-⋮----
-# Build features for this event
-# Create minimal events DataFrame for this single event
-event_df = pd.DataFrame({
-⋮----
-features = build_features(
-⋮----
-# Extract features for prediction
-features_row = features.iloc[0]
-features_dict = {
-⋮----
-# Classify
-⋮----
-# Place entry order
-entry_result = trader.place_entry_order(symbol)
-⋮----
-# Update state
-⋮----
-# Check for EXIT (if today is T+1 or later)
-⋮----
-position = state_manager.get_position(symbol)
-⋮----
-# Verify this is the same earnings event
-⋮----
-# Get current price for PnL
-exit_price = trader.get_current_price(symbol)
-⋮----
-entry_price = position["entry_price"]
-entry_qty = position["entry_qty"]
-⋮----
-# Place exit order
-exit_result = trader.place_exit_order(symbol, entry_qty)
-⋮----
-# Compute PnL (with transaction costs)
-gross_pnl_pct = (fill_price - entry_price) / entry_price if entry_price > 0 else 0.0
-net_pnl_pct = gross_pnl_pct - (2 * config.PEAD_LIVE_PTC)
-pnl_dollars = net_pnl_pct * entry_price * entry_qty
-⋮----
-# Log trade
-t_plus_1 = calculate_offset_trading_date(earnings_date, 1)
-exit_date_str = str(t_plus_1.date()) if t_plus_1 else str(get_current_market_date())
-⋮----
-# Remove position from state (clean slate)
-⋮----
-# Summary report
-⋮----
-# Clear cache for next execution
-````
-
 ## File: strategies/__init__.py
 ````python
 
-````
-
-## File: strategies/momentum.py
-````python
-log = logging.getLogger(__name__)
-⋮----
-class CrossSectionalMomentum(AlpacaBacktestBase)
-⋮----
-"""Cross-sectional momentum strategy on a symbol universe.
-
-    Ranks symbols by N-day simple price return each Friday, goes long
-    the top ``top_n`` equal-weight, and rebalances weekly.
-
-    Parameters
-    ----------
-    data : dict[str, pd.DataFrame]
-        Output of ``data.alpaca_data.fetch_bars`` — symbol → OHLCV+return DataFrame.
-    lookback : int
-        Number of trading days for momentum return calculation.
-    top_n : int
-        Number of symbols to hold long.
-    initial_amount : float
-        Starting capital in USD.
-    ftc : float
-        Fixed transaction cost per trade.
-    ptc : float
-        Proportional transaction cost per trade.
-    verbose : bool
-        If True, print each order.
-    """
-⋮----
-self._holdings: set[str] = set()   # currently held symbols
-⋮----
-# ------------------------------------------------------------------
-# Signal
-⋮----
-def compute_scores(self, bar: int) -> pd.Series
-⋮----
-"""Compute N-day simple price return for each symbol at bar.
-
-        Returns
-        -------
-        pd.Series
-            Symbols ranked descending by return score.
-        """
-⋮----
-scores: dict[str, float] = {}
-date_now = self.dates[bar]
-date_prev = self.dates[bar - self.lookback]
-⋮----
-price_now = float(df.loc[date_now, "close"])
-price_prev = float(df.loc[date_prev, "close"])
-⋮----
-# Event handler
-⋮----
-def on_bar(self, bar: int) -> None
-⋮----
-"""Rebalance portfolio on Fridays based on momentum signal."""
-scores = self.compute_scores(bar)
-⋮----
-# Cash-out rule: only consider symbols with positive momentum
-positive = scores[scores > 0]
-target = set(positive.head(self.top_n).index)
-⋮----
-# 1. Sell symbols no longer in target (dropped or all momentum negative)
-⋮----
-units = self.units_held.get(symbol, 0.0)
-⋮----
-# 2. Buy new entries equal-weight (skip if no positive-momentum symbols)
-new_entries = target - self._holdings
-⋮----
-allocation = self.cash / len(new_entries)
-⋮----
-# Run override (adds risk summary + plot)
-⋮----
-def run_backtest(self, save_path: str | None = None) -> pd.Series
-⋮----
-"""Run the full event-driven backtest and print risk summary.
-
-        Parameters
-        ----------
-        save_path : str, optional
-            If provided, save the equity curve plot to this file path.
-
-        Returns
-        -------
-        pd.Series
-            Equity curve indexed by date.
-        """
-⋮----
-equity = pd.Series(
-⋮----
-# ---------------------------------------------------------------------------
-# Live paper trader
-⋮----
-class LiveMomentumTrader(AlpacaLiveTraderBase)
-⋮----
-"""Cross-sectional momentum live paper trader.
-
-    Uses the same signal as ``CrossSectionalMomentum`` but submits real orders
-    to the Alpaca paper trading account.
-
-    Parameters
-    ----------
-    symbols : list[str]
-        Universe of symbols to rank.
-    lookback : int
-        N-day return lookback window.
-    top_n : int
-        Number of symbols to hold.
-    initial_amount : float
-        Approximate portfolio size used for equal-weight allocation.
-    """
-⋮----
-def compute_signal(self) -> list[str]
-⋮----
-"""Fetch latest data and return top-N positive-momentum symbols.
-
-        Returns
-        -------
-        list[str]
-            Top-N symbols ranked by N-day return, best first.
-            If all scores are non-positive, returns an empty list (stay in cash).
-        """
-now_utc = datetime.now(timezone.utc)
-end = now_utc.strftime("%Y-%m-%d")
-# Fetch extra days to ensure we have enough trading days
-start = (now_utc - timedelta(days=self.lookback * 2)).strftime("%Y-%m-%d")
-⋮----
-data = fetch_bars(self.symbols, start, end)
-⋮----
-price_now = float(df["close"].iloc[-1])
-price_prev = float(df["close"].iloc[-(self.lookback + 1)])
-⋮----
-ranked = sorted(scores, key=lambda s: scores[s], reverse=True)
-positive_ranked = [symbol for symbol in ranked if scores[symbol] > 0]
-⋮----
-# Rebalance
-⋮----
-def rebalance(self) -> None
-⋮----
-"""Execute a full signal → order cycle.
-
-        Computes the momentum signal, diffs against current positions,
-        and submits market orders for changes.
-        """
-⋮----
-target = set(self.compute_signal())
-⋮----
-current = self.get_current_positions()
-⋮----
-# Sell dropped holdings
-⋮----
-# Fetch recent prices for target and currently held universe symbols.
-# Used for share sizing and optional capital-cap accounting.
-strategy_held = {symbol for symbol in current if symbol in self.symbols}
-symbols_for_prices = sorted(target | strategy_held)
-⋮----
-start = (now_utc - timedelta(days=5)).strftime("%Y-%m-%d")
-price_data = fetch_bars(symbols_for_prices, start, end) if symbols_for_prices else {}
-⋮----
-# Estimate available capital
-account = self.client.get_account()
-available_cash = float(getattr(account, "cash", 0.0) or 0.0)
-⋮----
-deployable_cash = available_cash
-⋮----
-current_value = 0.0
-⋮----
-px = float(price_data[symbol]["close"].iloc[-1])
-⋮----
-remaining_budget = max(self.max_capital - current_value, 0.0)
-deployable_cash = min(available_cash, remaining_budget)
-⋮----
-allocation = deployable_cash / len(target) if target else 0.0
-⋮----
-# Buy new entries
-⋮----
-price = float(price_data[symbol]["close"].iloc[-1])
-qty = math.floor(allocation / price)
 ````
 
 ## File: strategies/pead_backtest.py
@@ -4707,177 +4743,56 @@ def save_trained_classifier(model: Any, scaler: StandardScaler, model_path: str 
 path = Path(model_path)
 ````
 
-## File: strategies/pead_live_trader.py
+## File: tests/test_alpaca_credentials.py
 ````python
-"""PEAD live trader for Alpaca paper trading execution.
-
-Handles order placement (entry/exit), position sizing, and market price queries.
-Extends AlpacaLiveTraderBase for paper trading via Alpaca API.
-"""
+class ResolveAlpacaCredentialsTests(unittest.TestCase)
 ⋮----
-log = logging.getLogger(__name__)
+def test_resolves_v1_credentials(self)
 ⋮----
-class PEADLiveTrader(AlpacaLiveTraderBase)
+def test_resolves_v2_credentials(self)
 ⋮----
-"""Alpaca-based live trader for PEAD strategy."""
+def test_raises_for_unknown_profile(self)
 ⋮----
-def __init__(self, paper: bool = True, position_size_pct: float = 0.10)
-⋮----
-"""Initialize PEAD live trader.
-        
-        Parameters
-        ----------
-        paper : bool
-            Must be True (paper trading only)
-        position_size_pct : float
-            Position size as fraction of account equity (default: 0.10 = 10%)
-        """
-⋮----
-self.ptc = 0.001  # 0.1% proportional transaction cost per leg
-⋮----
-def calculate_position_size(self, entry_price: float) -> int
-⋮----
-"""Calculate number of shares to buy.
-        
-        Parameters
-        ----------
-        entry_price : float
-            Entry order fill price
-            
-        Returns
-        -------
-        int
-            Number of shares to buy (rounded down)
-        """
-⋮----
-# Get account equity
-account = self.client.get_account()
-account_equity = float(account.equity)
-⋮----
-# Calculate position value
-position_value = account_equity * self.position_size_pct
-⋮----
-# Calculate shares
-qty = int(position_value / entry_price)
-⋮----
-def place_entry_order(self, symbol: str) -> tuple[str, float, int] | None
-⋮----
-"""Place a market BUY order for entry.
-        
-        Parameters
-        ----------
-        symbol : str
-            Stock symbol
-            
-        Returns
-        -------
-        tuple[str, float, int] or None
-            (order_id, fill_price, qty) if successful, else None
-        """
-⋮----
-# Get current price to calculate position size
-entry_price = self.get_current_price(symbol)
-⋮----
-# Calculate position size
-qty = self.calculate_position_size(entry_price)
-⋮----
-# Place market order
-request = MarketOrderRequest(
-⋮----
-order = self.client.submit_order(request)
-⋮----
-# Capture fill details
-fill_price = float(order.filled_avg_price) if order.filled_avg_price else entry_price
-filled_qty = int(order.filled_qty) if order.filled_qty else qty
-⋮----
-def place_exit_order(self, symbol: str, qty: int) -> tuple[str, float] | None
-⋮----
-"""Place a market SELL order for exit.
-        
-        Parameters
-        ----------
-        symbol : str
-            Stock symbol
-        qty : int
-            Shares to sell
-            
-        Returns
-        -------
-        tuple[str, float] or None
-            (order_id, fill_price) if successful, else None
-        """
-⋮----
-# Get current price
-exit_price = self.get_current_price(symbol)
-⋮----
-fill_price = float(order.filled_avg_price) if order.filled_avg_price else exit_price
-⋮----
-def get_current_price(self, symbol: str) -> float | None
-⋮----
-"""Fetch current market price for a symbol.
-        
-        Parameters
-        ----------
-        symbol : str
-            Stock symbol
-            
-        Returns
-        -------
-        float or None
-            Current market price, or None if unavailable
-        """
-⋮----
-# Use quotes endpoint to get latest price
-quote = self.client.get_latest_trade(symbol)
-⋮----
-price = float(quote.price)
-⋮----
-def get_order_details(self, order_id: str) -> dict | None
-⋮----
-"""Get details of a placed order.
-        
-        Parameters
-        ----------
-        order_id : str
-            Order ID from Alpaca
-            
-        Returns
-        -------
-        dict or None
-            Order details (status, filled_qty, filled_avg_price, etc.), or None on error
-        """
-⋮----
-order = self.client.get_order_by_id(order_id)
+def test_raises_when_required_variables_are_missing(self)
 ````
 
-## File: tests/test_alpaca_data.py
+## File: tests/test_live_trader_profiles.py
 ````python
-class FetchBarsTests(unittest.TestCase)
+class LiveTraderProfileTests(unittest.TestCase)
 ⋮----
-def _make_bars_response(self) -> SimpleNamespace
+@patch("core.live_trader_base.TradingClient")
+@patch("core.live_trader_base.resolve_alpaca_credentials", return_value=("api", "secret"))
+    def test_live_trader_base_uses_requested_profile(self, mock_resolve, mock_client)
 ⋮----
-index = pd.MultiIndex.from_tuples(
-df = pd.DataFrame(
+@patch("core.live_trader_base.resolve_alpaca_credentials", side_effect=EnvironmentError("missing creds"))
+    def test_live_trader_base_fails_fast_on_missing_profile_credentials(self, mock_resolve)
 ⋮----
-@patch("data.alpaca_data._get_client")
-    def test_fetch_bars_uses_inclusive_end_date_for_daily_requests(self, mock_get_client)
+@patch("core.live_trader_base.AlpacaLiveTraderBase.__init__", return_value=None)
+    def test_live_momentum_trader_defaults_to_v1_profile(self, mock_base_init)
 ⋮----
-mock_client = mock_get_client.return_value
+@patch("strategies.pead_live_trader.AlpacaLiveTraderBase.__init__", return_value=None)
+    def test_pead_live_trader_defaults_to_v2_profile(self, mock_base_init)
+````
+
+## File: tests/test_momentum_live_rebalance.py
+````python
+# risk.metrics imports matplotlib at module import time; stub it for unit tests.
 ⋮----
-request = mock_client.get_stock_bars.call_args.args[0]
+def _price_df(price: float) -> pd.DataFrame
 ⋮----
-@patch("data.alpaca_data._get_client")
-    def test_fetch_bars_defaults_to_iex_feed(self, mock_get_client)
+class LiveMomentumTraderRebalanceTests(unittest.TestCase)
 ⋮----
-@patch("data.alpaca_data._get_client")
-    def test_fetch_bars_honors_feed_override(self, mock_get_client)
+trader = LiveMomentumTrader(symbols=["AAPL", "AMZN", "META", "NVDA"], max_capital=None)
 ⋮----
-@patch("data.alpaca_data._get_client")
-    def test_fetch_bars_preserves_first_requested_ohlcv_row(self, mock_get_client)
+# Sell dropped holding first, then buy ranked replacement that can be funded.
 ⋮----
-result = fetch_bars(["NXPI"], start="2026-04-14", end="2026-04-23")
+# AMZN should be explicitly skipped due to insufficient pre-close cash.
 ⋮----
-nxpi = result["NXPI"]
+trader = LiveMomentumTrader(symbols=["AAPL", "AMZN", "META"], max_capital=1000.0)
+⋮----
+# META is sold, and AMZN buy sizing uses cap minus retained (AAPL) value: (1000 - 100) / 100 = 9 shares.
+⋮----
+trader = LiveMomentumTrader(symbols=["AAPL"], max_capital=1000.0)
 ````
 
 ## File: tests/test_pead_backtest.py
@@ -4913,17 +4828,6 @@ earnings_date = "2025-04-22"
 def test_current_market_date_uses_new_york_timezone(self)
 ⋮----
 now_utc = datetime(2026, 4, 24, 1, 50, tzinfo=timezone.utc)
-````
-
-## File: tests/test_pead_live_cronjob.py
-````python
-class PEADLiveCronjobTimingTests(unittest.TestCase)
-⋮----
-mock_state_manager = mock_state_manager_cls.return_value
-⋮----
-mock_classifier = mock_classifier_cls.return_value
-⋮----
-event_df = mock_build_features.call_args.kwargs["events_df"]
 ````
 
 ## File: tests/test_pre_earnings_features.py
@@ -5065,105 +4969,217 @@ if date.weekday() == 0:  # Monday (Mon=0 … Fri=4)
 value = self.get_portfolio_value(bar)
 ````
 
-## File: data/alpaca_data.py
-````python
-def _resolve_stock_feed() -> str
-⋮----
-"""Resolve stock data feed for Alpaca bars requests.
+## File: openspec/specs/momentum-strategy/spec.md
+````markdown
+## ADDED Requirements
 
-    Defaults to IEX so paper/free subscriptions can query recent data.
-    Set APCA_STOCK_FEED or APCA_DATA_FEED to override (e.g., sip, delayed_sip).
-    """
-⋮----
-def _get_client() -> StockHistoricalDataClient
-⋮----
-"""Build an authenticated StockHistoricalDataClient from environment variables."""
-api_key = os.environ.get("APCA_API_KEY_ID")
-secret_key = os.environ.get("APCA_API_SECRET_KEY")
-⋮----
-"""Fetch historical OHLCV bars for a list of symbols.
+### Requirement: Rank symbols by N-day simple return
+The strategy SHALL compute the N-day simple price return for each symbol at each rebalance bar and rank symbols from highest to lowest return.
 
-    Parameters
-    ----------
-    symbols : list[str]
-        Ticker symbols to fetch.
-    start : str
-        Start date, e.g. '2019-01-01'.
-    end : str
-        End date, e.g. '2024-12-31'.
-    timeframe : TimeFrame
-        Bar timeframe (default: daily).
+#### Scenario: Returns computed at each rebalance
+- **WHEN** the rebalance event fires at bar T
+- **THEN** each symbol's score is `(close[T] - close[T-N]) / close[T-N]` where N is the configured lookback window
 
-    Returns
-    -------
-    dict[str, pd.DataFrame]
-        Mapping of symbol → DataFrame with columns [open, high, low, close, volume, return],
-        indexed by date (UTC).
+#### Scenario: Symbols ranked correctly
+- **WHEN** NVDA has return=0.42, META=0.28, AAPL=0.05, others negative
+- **THEN** ranking is NVDA(1), META(2), AAPL(3), ... in descending order
 
-    Raises
-    ------
-    EnvironmentError
-        If Alpaca credentials are not set.
-    ValueError
-        If any symbol has no data in the requested range.
-    """
-client = _get_client()
-⋮----
-start_dt = datetime.strptime(start, "%Y-%m-%d")
-# Alpaca's `end` is exclusive for bar queries; add one day so caller's
-# YYYY-MM-DD end date remains inclusive at day granularity.
-end_dt = datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)
-⋮----
-request = StockBarsRequest(
-⋮----
-bars = client.get_stock_bars(request)
-df_all = bars.df  # MultiIndex: (symbol, timestamp)
-⋮----
-result: dict[str, pd.DataFrame] = {}
-⋮----
-df = df_all.loc[symbol].copy()
-df.index = pd.to_datetime(df.index).tz_localize(None)  # strip tz for simplicity
-⋮----
-# Keep only OHLCV columns
-df = df[["open", "high", "low", "close", "volume"]]
-⋮----
-# Compute log returns while preserving the first requested OHLCV bar.
+### Requirement: Go long top-N symbols equal-weight
+The strategy SHALL enter long positions in the top `top_n` ranked symbols, allocating equal weight (1/top_n of available capital) to each. Symbols outside the top-N SHALL be sold if currently held.
+
+#### Scenario: Equal-weight allocation
+- **WHEN** top_n=3 and available capital is $9000
+- **THEN** each of the 3 selected symbols receives $3000 of capital
+
+#### Scenario: Dropped symbol is sold
+- **WHEN** symbol S was in the top-N at the previous rebalance but is no longer in the top-N at the current rebalance
+- **THEN** all units of S are sold at the current closing price
+
+#### Scenario: New symbol enters top-N
+- **WHEN** symbol S enters the top-N at the current rebalance and is not currently held
+- **THEN** a buy order is placed for S using its equal-weight capital allocation
+
+### Requirement: Rebalance only on weekly frequency
+The strategy SHALL only execute rebalance logic on the last trading day of each calendar week (Friday, or Thursday if Friday is a holiday).
+
+#### Scenario: Rebalance fires on Friday
+- **WHEN** the current bar's date is a Friday
+- **THEN** the full ranking and rebalance logic executes
+
+#### Scenario: No trades on non-rebalance days
+- **WHEN** the current bar's date is Monday through Thursday
+- **THEN** no orders are placed and portfolio state is unchanged
+
+### Requirement: Configurable parameters
+The strategy SHALL accept `lookback` (int, days), `top_n` (int), `symbols` (list of str), `start` (str date), `end` (str date), `initial_amount` (float), `ftc` (float), and `ptc` (float) as constructor parameters.
+
+#### Scenario: Default parameters produce valid backtest
+- **WHEN** strategy is instantiated with symbols=M7, lookback=60, top_n=3, initial_amount=10000
+- **THEN** backtest runs without error over the configured date range
+
+### Requirement: Live rebalance preserves ranked replacement order
+The live momentum rebalance SHALL preserve the momentum-ranked target order returned by the signal, SHALL submit sell orders for dropped strategy holdings regardless of unrealized gain or loss, and SHALL evaluate new replacement buys in that same rank order.
+
+#### Scenario: Dropped symbol is sold even when losing
+- **WHEN** symbol S is currently held by the live momentum strategy, is no longer in the target list, and has a negative unrealized PnL
+- **THEN** the rebalance submits a sell order for S and does not retain it solely because it is at a loss
+
+#### Scenario: New entries are evaluated in momentum rank order
+- **WHEN** the live target ranking is `[AAPL, AMZN, NVDA]`, `AAPL` is already held, and `AMZN` and `NVDA` are new entries
+- **THEN** the rebalance evaluates `AMZN` before `NVDA` when allocating limited buy cash
+
+### Requirement: Live MOC buys use only pre-close available cash
+The live momentum rebalance SHALL compute buy budget only from cash available before the close, SHALL NOT treat same-day MOC sale proceeds as available for new buys, and SHALL size buys only across new target entries.
+
+#### Scenario: Same-day MOC sale proceeds are excluded from buy budget
+- **WHEN** symbol `META` is scheduled for a same-day MOC sell and `AMZN` is a new target entry
+- **THEN** the rebalance computes the `AMZN` buy budget without including expected proceeds from the `META` sell order
+
+#### Scenario: Buy sizing uses only remaining new-entry slots
+- **WHEN** there are two new target entries remaining and the live trader has `$1,000` of pre-close available cash
+- **THEN** the next buy decision is sized from the remaining cash divided by the remaining unfunded new entries rather than by all target holdings
+
+### Requirement: Insufficient-cash buys are skipped explicitly
+The live momentum rebalance SHALL skip a target buy when remaining buy budget cannot fund at least one whole share and SHALL log the skipped symbol and reason explicitly.
+
+#### Scenario: Buy skipped because one share cannot be funded
+- **WHEN** `AMZN` is a new target entry, the remaining buy budget is below the reference price of one share, and no fractional shares are supported
+- **THEN** no buy order is submitted for `AMZN` and logs record that the buy was skipped due to insufficient available cash before the close
 ````
 
-## File: openspec/specs/data-layer/spec.md
+## File: openspec/specs/pead-live-trader/spec.md
 ````markdown
-## MODIFIED Requirements
+## ADDED Requirements
 
-### Requirement: Fetch daily OHLCV bars for a symbol universe
-The system SHALL fetch historical daily bar data for a list of symbols using alpaca-py `StockHistoricalDataClient`, returning a dict mapping each symbol to a pandas DataFrame with columns: `open`, `high`, `low`, `close`, `volume` indexed by date. The function SHALL accept an optional `symbols` parameter allowing single-symbol fetches (for example `["QQQ"]`) in addition to the existing multi-symbol use case. Date-range behavior SHALL be inclusive of the requested end date for daily bars, and returned OHLCV rows SHALL be preserved even when first-row derived return fields are NaN.
+### Requirement: Daily cronjob executes PEAD trading logic
 
-#### Scenario: Successful multi-symbol fetch
-- **WHEN** `fetch_bars(symbols, start, end, timeframe)` is called with a list of valid symbols and a date range
-- **THEN** the function returns a dict where each key is a symbol string and each value is a DataFrame with OHLCV columns indexed by UTC date
+The system SHALL run PEAD live execution as a daily cronjob. At each execution, the system SHALL:
+1. Check each symbol (NXPI, AMD, AVGO) to determine if today is T-3 or T+1+ relative to the symbol's nearest upcoming earnings date
+2. Execute entry orders for any symbol at T-3, provided a positive classifier prediction exists
+3. Execute exit orders for any symbol at T+1 or later, if a position is currently open
+4. Log all order execution results
 
-#### Scenario: Single-symbol fetch for benchmark
-- **WHEN** `fetch_bars(["QQQ"], start, end)` is called
-- **THEN** the function returns a dict with a single key `"QQQ"` and a valid OHLCV DataFrame
+#### Scenario: Entry trigger on T-3
+- **WHEN** cronjob runs on a day that is T-3 for a symbol's nearest earnings event AND classifier predicts positive (pred_label == 1)
+- **THEN** system SHALL fetch 7-day OHLCV data (T-9 through T-3), place a market BUY order, record entry state with entry_date/entry_price/entry_qty
 
-#### Scenario: Inclusive end date for daily bars
-- **WHEN** `fetch_bars(["NXPI"], "2026-04-14", "2026-04-23")` is called and provider data exists for 2026-04-23
-- **THEN** the returned DataFrame includes the 2026-04-23 daily bar
+#### Scenario: Entry skipped on negative prediction
+- **WHEN** cronjob runs on T-3 for a symbol AND classifier predicts negative (pred_label == 0)
+- **THEN** system SHALL not place an order; position entry is skipped for this event
 
-#### Scenario: Symbol with no data in range
-- **WHEN** a symbol is requested but has no data in the given date range
-- **THEN** the function raises a descriptive `ValueError` identifying the missing symbol
+#### Scenario: Exit trigger on T+1 or later
+- **WHEN** cronjob runs on a day that is T+1 or later for a symbol's current open earnings event AND a position is currently open
+- **THEN** system SHALL place a market SELL order at current market price (immediate execution), log exit price and PnL, clear state entry for that symbol
 
-#### Scenario: Credentials loaded from .env
-- **WHEN** `fetch_bars()` is called and a `.env` file with valid credentials exists
-- **THEN** the `StockHistoricalDataClient` authenticates successfully and returns data
+#### Scenario: Double-trade prevention
+- **WHEN** cronjob runs on T-3 for a symbol AND state file already shows an open position for this symbol and the same earnings_date
+- **THEN** system SHALL not place another BUY order; only one entry per symbol per earnings event
 
-#### Scenario: Missing credentials
-- **WHEN** `APCA_API_KEY_ID` or `APCA_API_SECRET_KEY` is not set in the environment
-- **THEN** the function raises a `EnvironmentError` before making any API calls
+#### Scenario: Missed cronjob recovery
+- **WHEN** cronjob does not run on T+1 (e.g., droplet downtime), but runs on T+2 or later AND a position is still open
+- **THEN** system SHALL execute the exit order immediately on the first available execution, preventing positions from lingering past intended exit date
 
-#### Scenario: Returns column present after fetch
-- **WHEN** `fetch_bars()` returns successfully
-- **THEN** each symbol DataFrame contains a `return` column, and OHLCV rows are not dropped solely because first-row `return` is NaN
+### Requirement: Classifier integration for entry prediction
+
+The system SHALL use a pre-trained, frozen classifier to generate predictions for live trades. For each symbol on T-3:
+1. Load the latest trained classifier (no retraining during live cycle)
+2. Extract 7-day pre-earnings features (T-9 through T-3)
+3. Generate pred_label (0 or 1) and prob_positive probability
+4. Use pred_label to gate entry: only execute if pred_label == 1
+
+#### Scenario: Load classifier
+- **WHEN** daily cronjob initializes
+- **THEN** system SHALL load the most recent trained classifier model
+
+#### Scenario: Predict for T-3 features
+- **WHEN** on T-3 execution and need to decide whether to enter
+- **THEN** system SHALL extract 7-day momentum/volatility/QQQ correlation features, invoke classifier.predict(), receive pred_label and prob_positive
+
+#### Scenario: Entry gated on positive prediction
+- **WHEN** classifier returns pred_label == 1
+- **THEN** entry order proceeds to execution
+
+#### Scenario: Entry blocked on negative prediction
+- **WHEN** classifier returns pred_label == 0
+- **THEN** entry order is not placed; day is recorded as "skipped"
+
+### Requirement: Market order execution with Alpaca API
+
+The system SHALL submit market orders via Alpaca's trading API (paper trading account). For each order:
+1. Calculate position size as `(account_equity * 0.10) / current_price` for entry orders
+2. Submit market order (buy on entry, sell on exit) with time_in_force = Day
+3. Capture order ID, fill price, and fill timestamp
+4. Handle errors (insufficient buying power, API rate limits) by logging and deferring to next cronjob run
+
+#### Scenario: Calculate entry position size
+- **WHEN** entry order is ready to submit
+- **THEN** system SHALL read account equity, multiply by 0.10 (10% position size), divide by T-3 close price to get share count, round down to integer
+
+#### Scenario: Submit entry market order
+- **WHEN** position size is calculated
+- **THEN** system SHALL submit market BUY order via AlpacaLiveTraderBase, capturing order_id and requested fill price
+
+#### Scenario: Submit exit market order
+- **WHEN** T+1+ exit is triggered
+- **THEN** system SHALL submit market SELL order via AlpacaLiveTraderBase for the full open position quantity, capturing order_id and fill price
+
+#### Scenario: Handle Alpaca errors gracefully
+- **WHEN** order submission fails (e.g., API down, insufficient buying power)
+- **THEN** system SHALL log error, not crash, continue to next symbol, retry on next cronjob run
+
+### Requirement: Earnings date fetching and T-N offset calculation
+
+The system SHALL fetch the nearest upcoming earnings date for each symbol using yfinance, then calculate T-3 and T+1 offsets accounting for NYSE trading calendar (exclude weekends, US federal holidays).
+
+#### Scenario: Fetch nearest earnings date
+- **WHEN** cronjob runs
+- **THEN** system SHALL call fetch_earnings_events(symbol) to retrieve the next upcoming earnings date for each symbol (NXPI, AMD, AVGO)
+
+#### Scenario: Calculate T-3 from earnings date
+- **WHEN** earnings_date is known
+- **THEN** system SHALL find the trading day exactly 3 trading days before earnings_date (skip weekends and US holidays), call this T-3
+
+#### Scenario: Calculate T+1 from earnings date
+- **WHEN** earnings_date is known
+- **THEN** system SHALL find the trading day exactly 1 trading day after earnings_date, call this T+1
+
+#### Scenario: Handle holiday edge cases
+- **WHEN** earnings_date or T-3/T+1 calculation crosses a US federal holiday or weekend
+- **THEN** system SHALL skip non-trading days and use NYSE trading calendar to find the correct trading day offset
+
+### Requirement: PnL calculation at exit
+
+The system SHALL calculate and record the profit/loss for each trade at exit time using actual execution prices.
+
+#### Scenario: Calculate net PnL in dollars
+- **WHEN** exit order executes on T+1
+- **THEN** system SHALL compute: pnl_dollars = (exit_price - entry_price) * qty_shares - (2 * 0.001 * position_value) [accounting for entry and exit transaction costs of 0.1% each]
+
+#### Scenario: Calculate PnL percentage
+- **WHEN** exit order executes
+- **THEN** system SHALL compute: pnl_pct = pnl_dollars / (entry_price * qty_shares)
+
+#### Scenario: Record PnL in trade log
+- **WHEN** exit order executes with known entry_price, exit_price, and qty
+- **THEN** system SHALL append pnl_dollars and pnl_pct to the trade log entry
+
+### Requirement: PEAD live trading uses V2 profile
+The PEAD live trader SHALL initialize Alpaca trading access with profile `v2` so PEAD orders are isolated from momentum account activity.
+
+#### Scenario: PEAD live trader authenticates with V2 credentials
+- **WHEN** PEAD live cronjob creates `PEADLiveTrader`
+- **THEN** the trading client is authenticated with `V2_APCA_API_KEY_ID` and `V2_APCA_API_SECRET_KEY`
+
+### Requirement: PEAD live data fetches are profile-selectable
+PEAD live execution paths that fetch bars SHALL support explicit profile selection. If no profile is provided for general data calls, the system SHALL use default `v1` behavior.
+
+#### Scenario: PEAD live can request v2 market data explicitly
+- **WHEN** PEAD live flow calls the data layer with `profile="v2"`
+- **THEN** the request authenticates using V2 profile credentials
+
+#### Scenario: Default data profile remains v1
+- **WHEN** data fetches are called without explicit profile override
+- **THEN** data layer authentication uses profile `v1`
 ````
 
 ## File: risk/metrics.py
@@ -5253,6 +5269,279 @@ cr = calmar_ratio(equity_curve, periods_per_year)
 """Plot the equity curve using matplotlib."""
 ````
 
+## File: scripts/pead_live_cronjob.py
+````python
+"""Daily cronjob for PEAD live trading execution.
+
+Runs daily to check entry and exit conditions for configured symbols.
+Entry: T-E open if classifier predicts positive using bars through T-(E+1) close
+Exit: T+1 or later if position is open
+
+Usage:
+    python scripts/pead_live_cronjob.py
+"""
+⋮----
+log = logging.getLogger(__name__)
+⋮----
+def setup_logging() -> None
+⋮----
+"""Configure logging for cronjob."""
+log_path = Path("output") / f"pead_live_cronjob_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.log"
+⋮----
+root = logging.getLogger()
+⋮----
+fmt = logging.Formatter(
+⋮----
+fh = logging.FileHandler(log_path)
+⋮----
+ch = logging.StreamHandler(sys.stdout)
+⋮----
+def run_daily_execution() -> None
+⋮----
+"""Execute daily PEAD live trading logic."""
+⋮----
+feature_anchor_offset_days = config.get_pead_feature_anchor_offset_days()
+⋮----
+state_manager = PEADStateManager(config.PEAD_LIVE_STATE_FILE)
+trade_logger = PEADTradeLogger(config.PEAD_LIVE_LOG_FILE)
+trader = PEADLiveTrader(paper=True, position_size_pct=config.PEAD_LIVE_POSITION_SIZE, profile="v2")
+summary = {
+⋮----
+# Clean up stale entries
+⋮----
+# Fetch earnings dates for all symbols
+⋮----
+earnings_dates = {}
+⋮----
+earnings_date = get_cached_earnings(symbol, use_cache=True)
+⋮----
+# Process each symbol
+⋮----
+classifier = PEADClassifierLive(symbol=symbol)
+⋮----
+earnings_date = earnings_dates[symbol]
+timing_dates = get_pead_timing_dates(
+entry_date = timing_dates["entry_date"]
+feature_anchor_date = timing_dates["feature_anchor_date"]
+exit_date = timing_dates["exit_date"]
+today = get_current_market_date()
+⋮----
+# Check for ENTRY (if today is T-E)
+⋮----
+# Check if already traded this event (idempotency)
+⋮----
+# Fetch 7-day OHLCV ending at feature anchor (for T-3 open: T-10 to T-4)
+feature_window_start = calculate_offset_trading_date(feature_anchor_date, -6)
+⋮----
+bars_dict = fetch_bars(
+⋮----
+symbol_index = bars_dict[symbol].index
+symbol_trading_dates = set(pd.to_datetime(symbol_index).strftime("%Y-%m-%d"))
+⋮----
+# Build features for this event
+# Create minimal events DataFrame for this single event
+event_df = pd.DataFrame({
+⋮----
+features = build_features(
+⋮----
+# Extract features for prediction
+features_row = features.iloc[0]
+features_dict = {
+⋮----
+# Classify
+⋮----
+# Place entry order
+entry_result = trader.place_entry_order(symbol)
+⋮----
+# Update state
+⋮----
+# Check for EXIT (if today is T+1 or later)
+⋮----
+position = state_manager.get_position(symbol)
+⋮----
+# Verify this is the same earnings event
+⋮----
+# Get current price for PnL
+exit_price = trader.get_current_price(symbol)
+⋮----
+entry_price = position["entry_price"]
+entry_qty = position["entry_qty"]
+⋮----
+# Place exit order
+exit_result = trader.place_exit_order(symbol, entry_qty)
+⋮----
+# Compute PnL (with transaction costs)
+gross_pnl_pct = (fill_price - entry_price) / entry_price if entry_price > 0 else 0.0
+net_pnl_pct = gross_pnl_pct - (2 * config.PEAD_LIVE_PTC)
+pnl_dollars = net_pnl_pct * entry_price * entry_qty
+⋮----
+# Log trade
+t_plus_1 = calculate_offset_trading_date(earnings_date, 1)
+exit_date_str = str(t_plus_1.date()) if t_plus_1 else str(get_current_market_date())
+⋮----
+# Remove position from state (clean slate)
+⋮----
+# Summary report
+⋮----
+# Clear cache for next execution
+````
+
+## File: strategies/pead_live_trader.py
+````python
+"""PEAD live trader for Alpaca paper trading execution.
+
+Handles order placement (entry/exit), position sizing, and market price queries.
+Extends AlpacaLiveTraderBase for paper trading via Alpaca API.
+"""
+⋮----
+log = logging.getLogger(__name__)
+⋮----
+class PEADLiveTrader(AlpacaLiveTraderBase)
+⋮----
+"""Alpaca-based live trader for PEAD strategy."""
+⋮----
+def __init__(self, paper: bool = True, position_size_pct: float = 0.10, profile: str = "v2")
+⋮----
+"""Initialize PEAD live trader.
+        
+        Parameters
+        ----------
+        paper : bool
+            Must be True (paper trading only)
+        position_size_pct : float
+            Position size as fraction of account equity (default: 0.10 = 10%)
+        profile : str
+            Credential profile to use for Alpaca authentication (default: "v2").
+        """
+⋮----
+self.ptc = 0.001  # 0.1% proportional transaction cost per leg
+⋮----
+def calculate_position_size(self, entry_price: float) -> int
+⋮----
+"""Calculate number of shares to buy.
+        
+        Parameters
+        ----------
+        entry_price : float
+            Entry order fill price
+            
+        Returns
+        -------
+        int
+            Number of shares to buy (rounded down)
+        """
+⋮----
+# Get account equity
+account = self.client.get_account()
+account_equity = float(account.equity)
+⋮----
+# Calculate position value
+position_value = account_equity * self.position_size_pct
+⋮----
+# Calculate shares
+qty = int(position_value / entry_price)
+⋮----
+def place_entry_order(self, symbol: str) -> tuple[str, float, int] | None
+⋮----
+"""Place a market BUY order for entry.
+        
+        Parameters
+        ----------
+        symbol : str
+            Stock symbol
+            
+        Returns
+        -------
+        tuple[str, float, int] or None
+            (order_id, fill_price, qty) if successful, else None
+        """
+⋮----
+# Get current price to calculate position size
+entry_price = self.get_current_price(symbol)
+⋮----
+# Calculate position size
+qty = self.calculate_position_size(entry_price)
+⋮----
+# Place market order
+request = MarketOrderRequest(
+⋮----
+order = self.client.submit_order(request)
+⋮----
+# Capture fill details
+fill_price = float(order.filled_avg_price) if order.filled_avg_price else entry_price
+filled_qty = int(order.filled_qty) if order.filled_qty else qty
+⋮----
+def place_exit_order(self, symbol: str, qty: int) -> tuple[str, float] | None
+⋮----
+"""Place a market SELL order for exit.
+        
+        Parameters
+        ----------
+        symbol : str
+            Stock symbol
+        qty : int
+            Shares to sell
+            
+        Returns
+        -------
+        tuple[str, float] or None
+            (order_id, fill_price) if successful, else None
+        """
+⋮----
+# Get current price
+exit_price = self.get_current_price(symbol)
+⋮----
+fill_price = float(order.filled_avg_price) if order.filled_avg_price else exit_price
+⋮----
+def get_current_price(self, symbol: str) -> float | None
+⋮----
+"""Fetch current market price for a symbol.
+        
+        Parameters
+        ----------
+        symbol : str
+            Stock symbol
+            
+        Returns
+        -------
+        float or None
+            Current market price, or None if unavailable
+        """
+⋮----
+# Use quotes endpoint to get latest price
+quote = self.client.get_latest_trade(symbol)
+⋮----
+price = float(quote.price)
+⋮----
+def get_order_details(self, order_id: str) -> dict | None
+⋮----
+"""Get details of a placed order.
+        
+        Parameters
+        ----------
+        order_id : str
+            Order ID from Alpaca
+            
+        Returns
+        -------
+        dict or None
+            Order details (status, filled_qty, filled_avg_price, etc.), or None on error
+        """
+⋮----
+order = self.client.get_order_by_id(order_id)
+````
+
+## File: tests/test_pead_live_cronjob.py
+````python
+class PEADLiveCronjobTimingTests(unittest.TestCase)
+⋮----
+mock_state_manager = mock_state_manager_cls.return_value
+⋮----
+mock_classifier = mock_classifier_cls.return_value
+⋮----
+event_df = mock_build_features.call_args.kwargs["events_df"]
+````
+
 ## File: .repomixignore
 ````
 # Dev tooling
@@ -5282,6 +5571,74 @@ LICENSE
 output/
 ````
 
+## File: openspec/specs/data-layer/spec.md
+````markdown
+## MODIFIED Requirements
+
+### Requirement: Fetch daily OHLCV bars for a symbol universe
+The system SHALL fetch historical daily bar data for a list of symbols using alpaca-py `StockHistoricalDataClient`, returning a dict mapping each symbol to a pandas DataFrame with columns `open`, `high`, `low`, `close`, `volume` indexed by date. The function SHALL support profile-aware authentication and SHALL default to profile `v1` when no profile is provided.
+
+#### Scenario: Successful multi-symbol fetch with default profile
+- **WHEN** `fetch_bars(symbols, start, end, timeframe)` is called without an explicit profile
+- **THEN** the request authenticates with profile `v1` credentials and returns symbol-keyed OHLCV DataFrames
+
+#### Scenario: Successful fetch with explicit v2 profile
+- **WHEN** `fetch_bars(symbols, start, end, timeframe, profile="v2")` is called with valid V2 credentials
+- **THEN** the request authenticates with `V2_APCA_API_KEY_ID` and `V2_APCA_API_SECRET_KEY`
+
+#### Scenario: Backtest data fetch uses v1 by default
+- **WHEN** backtest workflows call `fetch_bars()` without profile overrides
+- **THEN** data-layer authentication uses profile `v1`
+
+#### Scenario: Missing profile credentials
+- **WHEN** required environment variables for the selected profile are not set
+- **THEN** the function raises `EnvironmentError` before making any API call and names the missing profile variables
+
+## ADDED Requirements
+
+### Requirement: Profile-aware data credential naming
+The data layer SHALL resolve credentials from profile-prefixed environment variables using the following names:
+- For `v1`: `V1_APCA_API_KEY_ID`, `V1_APCA_API_SECRET_KEY`
+- For `v2`: `V2_APCA_API_KEY_ID`, `V2_APCA_API_SECRET_KEY`
+
+#### Scenario: V2 key naming is normalized
+- **WHEN** profile `v2` is selected for a data request
+- **THEN** the system reads `V2_APCA_API_KEY_ID` and SHALL NOT require `V2_APCA_API_KEY`
+````
+
+## File: tests/test_alpaca_data.py
+````python
+class FetchBarsTests(unittest.TestCase)
+⋮----
+def _make_bars_response(self) -> SimpleNamespace
+⋮----
+index = pd.MultiIndex.from_tuples(
+df = pd.DataFrame(
+⋮----
+@patch("data.alpaca_data._get_client")
+    def test_fetch_bars_uses_inclusive_end_date_for_daily_requests(self, mock_get_client)
+⋮----
+mock_client = mock_get_client.return_value
+⋮----
+request = mock_client.get_stock_bars.call_args.args[0]
+⋮----
+@patch("data.alpaca_data._get_client")
+    def test_fetch_bars_defaults_to_iex_feed(self, mock_get_client)
+⋮----
+@patch("data.alpaca_data._get_client")
+    def test_fetch_bars_honors_feed_override(self, mock_get_client)
+⋮----
+@patch("data.alpaca_data._get_client")
+    def test_fetch_bars_preserves_first_requested_ohlcv_row(self, mock_get_client)
+⋮----
+result = fetch_bars(["NXPI"], start="2026-04-14", end="2026-04-23")
+⋮----
+nxpi = result["NXPI"]
+⋮----
+@patch("data.alpaca_data._get_client")
+    def test_fetch_bars_supports_explicit_v2_profile(self, mock_get_client)
+````
+
 ## File: config.py
 ````python
 def _validate_positive_int(name: str, value: int) -> int
@@ -5300,9 +5657,11 @@ PTC = 0.0           # Proportional transaction cost per trade
 START_DATE = "2020-01-01"
 END_DATE = "2025-12-31"
 ⋮----
-# Alpaca credentials
-APCA_API_KEY_ID = os.environ.get("APCA_API_KEY_ID")
-APCA_API_SECRET_KEY = os.environ.get("APCA_API_SECRET_KEY")
+# Alpaca profile credentials
+V1_APCA_API_KEY_ID = os.environ.get("V1_APCA_API_KEY_ID")
+V1_APCA_API_SECRET_KEY = os.environ.get("V1_APCA_API_SECRET_KEY")
+V2_APCA_API_KEY_ID = os.environ.get("V2_APCA_API_KEY_ID")
+V2_APCA_API_SECRET_KEY = os.environ.get("V2_APCA_API_SECRET_KEY")
 ⋮----
 # PEAD strategy parameters (Post-Earnings Announcements Drift)
 PEAD_SYMBOLS = ["NXPI", "AMD", "AVGO"]
@@ -5339,12 +5698,11 @@ class AlpacaLiveTraderBase
     ----------
     paper : bool
         Must be True.  Raises ``ValueError`` if False.
+    profile : str
+        Credential profile to use for Alpaca authentication.
     """
 ⋮----
-def __init__(self, paper: bool = True) -> None
-⋮----
-api_key = os.environ.get("APCA_API_KEY_ID")
-secret_key = os.environ.get("APCA_API_SECRET_KEY")
+def __init__(self, paper: bool = True, profile: str = "v1") -> None
 ⋮----
 # ------------------------------------------------------------------
 # Positions
@@ -5383,6 +5741,287 @@ next_open = getattr(clock, "next_open", None)
 next_open_msg = str(next_open) if next_open is not None else "unknown"
 ````
 
+## File: strategies/momentum.py
+````python
+log = logging.getLogger(__name__)
+⋮----
+class CrossSectionalMomentum(AlpacaBacktestBase)
+⋮----
+"""Cross-sectional momentum strategy on a symbol universe.
+
+    Ranks symbols by N-day simple price return each Friday, goes long
+    the top ``top_n`` equal-weight, and rebalances weekly.
+
+    Parameters
+    ----------
+    data : dict[str, pd.DataFrame]
+        Output of ``data.alpaca_data.fetch_bars`` — symbol → OHLCV+return DataFrame.
+    lookback : int
+        Number of trading days for momentum return calculation.
+    top_n : int
+        Number of symbols to hold long.
+    initial_amount : float
+        Starting capital in USD.
+    ftc : float
+        Fixed transaction cost per trade.
+    ptc : float
+        Proportional transaction cost per trade.
+    verbose : bool
+        If True, print each order.
+    """
+⋮----
+self._holdings: set[str] = set()   # currently held symbols
+⋮----
+# ------------------------------------------------------------------
+# Signal
+⋮----
+def compute_scores(self, bar: int) -> pd.Series
+⋮----
+"""Compute N-day simple price return for each symbol at bar.
+
+        Returns
+        -------
+        pd.Series
+            Symbols ranked descending by return score.
+        """
+⋮----
+scores: dict[str, float] = {}
+date_now = self.dates[bar]
+date_prev = self.dates[bar - self.lookback]
+⋮----
+price_now = float(df.loc[date_now, "close"])
+price_prev = float(df.loc[date_prev, "close"])
+⋮----
+# Event handler
+⋮----
+def on_bar(self, bar: int) -> None
+⋮----
+"""Rebalance portfolio on Fridays based on momentum signal."""
+scores = self.compute_scores(bar)
+⋮----
+# Cash-out rule: only consider symbols with positive momentum
+positive = scores[scores > 0]
+target = set(positive.head(self.top_n).index)
+⋮----
+# 1. Sell symbols no longer in target (dropped or all momentum negative)
+⋮----
+units = self.units_held.get(symbol, 0.0)
+⋮----
+# 2. Buy new entries equal-weight (skip if no positive-momentum symbols)
+new_entries = target - self._holdings
+⋮----
+allocation = self.cash / len(new_entries)
+⋮----
+# Run override (adds risk summary + plot)
+⋮----
+def run_backtest(self, save_path: str | None = None) -> pd.Series
+⋮----
+"""Run the full event-driven backtest and print risk summary.
+
+        Parameters
+        ----------
+        save_path : str, optional
+            If provided, save the equity curve plot to this file path.
+
+        Returns
+        -------
+        pd.Series
+            Equity curve indexed by date.
+        """
+⋮----
+equity = pd.Series(
+⋮----
+# ---------------------------------------------------------------------------
+# Live paper trader
+⋮----
+class LiveMomentumTrader(AlpacaLiveTraderBase)
+⋮----
+"""Cross-sectional momentum live paper trader.
+
+    Uses the same signal as ``CrossSectionalMomentum`` but submits real orders
+    to the Alpaca paper trading account.
+
+    Parameters
+    ----------
+    symbols : list[str]
+        Universe of symbols to rank.
+    lookback : int
+        N-day return lookback window.
+    top_n : int
+        Number of symbols to hold.
+    initial_amount : float
+        Approximate portfolio size used for equal-weight allocation.
+    """
+⋮----
+def _last_completed_utc_day(self) -> datetime
+⋮----
+"""Return the latest fully completed UTC calendar day for daily bars."""
+⋮----
+def compute_signal(self) -> list[str]
+⋮----
+"""Fetch latest data and return top-N positive-momentum symbols.
+
+        Returns
+        -------
+        list[str]
+            Top-N symbols ranked by N-day return, best first.
+            If all scores are non-positive, returns an empty list (stay in cash).
+        """
+last_complete_day_utc = self._last_completed_utc_day()
+end = last_complete_day_utc.strftime("%Y-%m-%d")
+# Fetch extra days to ensure we have enough trading days.
+start = (last_complete_day_utc - timedelta(days=self.lookback * 2)).strftime("%Y-%m-%d")
+⋮----
+data = fetch_bars(self.symbols, start, end, profile=self.profile)
+⋮----
+price_now = float(df["close"].iloc[-1])
+price_prev = float(df["close"].iloc[-(self.lookback + 1)])
+⋮----
+ranked = sorted(scores, key=lambda s: scores[s], reverse=True)
+positive_ranked = [symbol for symbol in ranked if scores[symbol] > 0]
+⋮----
+# Rebalance
+⋮----
+def rebalance(self) -> None
+⋮----
+"""Execute a full signal → order cycle.
+
+        Computes the momentum signal, diffs against current positions,
+        and submits market orders for changes.
+        """
+⋮----
+ranked_target = self.compute_signal()
+target = set(ranked_target)
+⋮----
+current = self.get_current_positions()
+⋮----
+strategy_held = {symbol for symbol in current if symbol in self.symbols}
+retained_held = {symbol for symbol in strategy_held if symbol in target}
+⋮----
+# Sell dropped holdings regardless of unrealized PnL.
+⋮----
+qty = current[symbol]
+⋮----
+# Fetch recent prices for target and currently held universe symbols.
+# Used for share sizing and optional capital-cap accounting.
+symbols_for_prices = sorted(set(ranked_target) | strategy_held)
+⋮----
+start = (last_complete_day_utc - timedelta(days=5)).strftime("%Y-%m-%d")
+price_data = (
+⋮----
+# Estimate available capital
+account = self.client.get_account()
+available_cash = float(getattr(account, "cash", 0.0) or 0.0)
+⋮----
+deployable_cash = available_cash / 2.0
+⋮----
+retained_value = 0.0
+⋮----
+px = float(price_data[symbol]["close"].iloc[-1])
+⋮----
+remaining_budget = max(self.max_capital - retained_value, 0.0)
+deployable_cash = min(available_cash, remaining_budget)
+⋮----
+# Buy new entries in rank order using remaining cash and remaining slots.
+new_entries = [symbol for symbol in ranked_target if symbol not in current or current[symbol] == 0]
+remaining_cash = deployable_cash
+remaining_slots = len(new_entries)
+⋮----
+price = float(price_data[symbol]["close"].iloc[-1])
+per_symbol_budget = remaining_cash / remaining_slots
+qty = math.floor(per_symbol_budget / price)
+````
+
+## File: data/alpaca_data.py
+````python
+log = logging.getLogger(__name__)
+⋮----
+def _get_retry_config() -> tuple[int, float]
+⋮----
+"""Return retry settings for transient Alpaca data fetch errors.
+
+    Environment overrides:
+    - APCA_DATA_RETRY_COUNT (default: 10, minimum: 0)
+    - APCA_DATA_RETRY_DELAY_SEC (default: 60.0, minimum: 1.0)
+    """
+retry_count = int(os.environ.get("APCA_DATA_RETRY_COUNT", "10"))
+retry_delay_sec = float(os.environ.get("APCA_DATA_RETRY_DELAY_SEC", "60.0"))
+⋮----
+def _get_stock_bars_with_retry(client: StockHistoricalDataClient, request: StockBarsRequest)
+⋮----
+"""Fetch bars with retries for transient transport-level failures."""
+⋮----
+last_error: Exception | None = None
+⋮----
+# retry_count means retries after the first failed attempt.
+total_attempts = retry_count + 1
+⋮----
+last_error = err
+retries_used = attempt - 1
+⋮----
+def _resolve_stock_feed() -> str
+⋮----
+"""Resolve stock data feed for Alpaca bars requests.
+
+    Defaults to IEX so paper/free subscriptions can query recent data.
+    Set APCA_STOCK_FEED or APCA_DATA_FEED to override (e.g., sip, delayed_sip).
+    """
+⋮----
+def _get_client(profile: str = "v1") -> StockHistoricalDataClient
+⋮----
+"""Build an authenticated StockHistoricalDataClient for a named profile."""
+⋮----
+"""Fetch historical OHLCV bars for a list of symbols.
+
+    Parameters
+    ----------
+    symbols : list[str]
+        Ticker symbols to fetch.
+    start : str
+        Start date, e.g. '2019-01-01'.
+    end : str
+        End date, e.g. '2024-12-31'.
+    timeframe : TimeFrame
+        Bar timeframe (default: daily).
+    profile : str
+        Credential profile to use for Alpaca authentication (default: "v1").
+
+    Returns
+    -------
+    dict[str, pd.DataFrame]
+        Mapping of symbol → DataFrame with columns [open, high, low, close, volume, return],
+        indexed by date (UTC).
+
+    Raises
+    ------
+    EnvironmentError
+        If Alpaca credentials are not set.
+    ValueError
+        If any symbol has no data in the requested range.
+    """
+client = _get_client(profile=profile)
+⋮----
+start_dt = datetime.strptime(start, "%Y-%m-%d")
+# Alpaca's `end` is exclusive for bar queries; add one day so caller's
+# YYYY-MM-DD end date remains inclusive at day granularity.
+end_dt = datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)
+⋮----
+request = StockBarsRequest(
+⋮----
+bars = _get_stock_bars_with_retry(client, request)
+df_all = bars.df  # MultiIndex: (symbol, timestamp)
+⋮----
+result: dict[str, pd.DataFrame] = {}
+⋮----
+df = df_all.loc[symbol].copy()
+df.index = pd.to_datetime(df.index).tz_localize(None)  # strip tz for simplicity
+⋮----
+# Keep only OHLCV columns
+df = df[["open", "high", "low", "close", "volume"]]
+⋮----
+# Compute log returns while preserving the first requested OHLCV bar.
+````
+
 ## File: openspec/specs/live-trader/spec.md
 ````markdown
 ## MODIFIED Requirements
@@ -5401,6 +6040,61 @@ The PEAD live execution flow SHALL evaluate entry for each symbol using configur
 #### Scenario: Existing order safety behavior preserved
 - **WHEN** live execution runs outside supported order timing or data preconditions
 - **THEN** no new entry order is submitted
+
+### Requirement: MOC rebalance budget excludes exiting positions
+For live MOC rebalances with a capital cap, the system SHALL compute retained strategy exposure using only currently held symbols that remain in the target set, and SHALL exclude positions already marked for sale from capital-cap accounting.
+
+#### Scenario: Capital cap ignores positions already scheduled to exit
+- **WHEN** the strategy currently holds `AAPL`, `META`, and `NVDA`, `META` is no longer in the target set, and a capital cap is configured
+- **THEN** the rebalance computes retained exposure from `AAPL` and `NVDA` only and does not count `META` against remaining buy budget
+
+### Requirement: Live rebalance logs skipped buys for auditability
+The live trader SHALL write an explicit log entry when a target buy is skipped because pre-close available cash cannot fund at least one whole share.
+
+#### Scenario: Insufficient-cash skip is logged
+- **WHEN** symbol S is a new target entry and the remaining buy budget is less than the reference price of one share of S
+- **THEN** the rebalance submits no buy order for S and logs the symbol, remaining cash, and insufficient-cash skip reason
+
+## ADDED Requirements
+
+### Requirement: Profile-aware Alpaca live trader authentication
+The live trader base SHALL authenticate Alpaca trading clients using a required profile identifier for live strategy flows. Supported profiles are `v1` and `v2`, each mapped to profile-prefixed environment variables.
+
+#### Scenario: Momentum live trader uses v1 profile
+- **WHEN** weekly momentum live rebalance initializes its trading client
+- **THEN** it authenticates using `V1_APCA_API_KEY_ID` and `V1_APCA_API_SECRET_KEY`
+
+#### Scenario: Missing live profile credentials fail fast
+- **WHEN** the selected profile credentials are missing at trader initialization time
+- **THEN** initialization fails with an error that identifies the missing profile variable names
+
+### Requirement: Live momentum routing is explicit
+The live momentum execution flow SHALL pass profile `v1` explicitly when constructing the shared live trader base.
+
+#### Scenario: Momentum account routing is deterministic
+- **WHEN** momentum live rebalance is executed from supported entrypoints
+- **THEN** all order placement calls route through a `TradingClient` initialized with profile `v1`
+````
+
+## File: environment.yml
+````yaml
+name: strategy-lab
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+  - matplotlib
+  - python-dotenv
+  - pip:
+      - alpaca-py
+      - yfinance
+      - lxml
 ````
 
 ## File: run.py
@@ -5490,6 +6184,10 @@ def main() -> None
 ⋮----
 parser = argparse.ArgumentParser(description="Run momentum backtest, live paper rebalance, PEAD ML backtest, or PEAD live trading.")
 ⋮----
+def _positive_float(value: str) -> float
+⋮----
+parsed = float(value)
+⋮----
 args = parser.parse_args()
 ⋮----
 log = _setup_live_logging()
@@ -5525,6 +6223,10 @@ def _parse_args() -> argparse.Namespace
 ⋮----
 parser = argparse.ArgumentParser(description="Weekly live rebalance runner.")
 ⋮----
+def _positive_float(value: str) -> float
+⋮----
+parsed = float(value)
+⋮----
 def main() -> int
 ⋮----
 args = _parse_args()
@@ -5537,30 +6239,12 @@ log = _setup_logging(repo_root / "output" / "live_rebalance.log")
 # — submits MOC orders with a 5-min buffer before the 19:50 UTC Alpaca MOC cutoff.
 now_utc = datetime.now(timezone.utc)
 ⋮----
+total_attempts = retry_count + 1
+worst_case_wait_min = (retry_count * retry_delay_sec) / 60.0
+⋮----
 trader = LiveMomentumTrader(
 ⋮----
 except Exception:  # noqa: BLE001
-````
-
-## File: environment.yml
-````yaml
-name: strategy-lab
-channels:
-  - conda-forge
-  - defaults
-dependencies:
-  - python=3.12
-  - pip
-  - numpy
-  - pandas
-  - scipy
-  - scikit-learn
-  - matplotlib
-  - python-dotenv
-  - pip:
-      - alpaca-py
-      - yfinance
-      - lxml
 ````
 
 ## File: README.md
@@ -5576,6 +6260,29 @@ Activate the project environment first:
 ```bash
 conda activate strategy-lab
 ```
+
+## Account Profiles
+
+This repository uses two Alpaca paper-account credential profiles:
+- `v1`: momentum strategy (live weekly rebalance)
+- `v2`: PEAD strategy (live daily cronjob)
+
+Data-layer calls default to profile `v1`, which keeps backtests and data-only workflows on V1 unless a call site explicitly passes another profile.
+
+Copy `.env.example` to `.env` and set profile credentials:
+
+```bash
+cp .env.example .env
+```
+
+Required environment variables:
+- `V1_APCA_API_KEY_ID`
+- `V1_APCA_API_SECRET_KEY`
+- `V2_APCA_API_KEY_ID`
+- `V2_APCA_API_SECRET_KEY`
+
+Migration note:
+- Previous V2 key name `V2_APCA_API_KEY` has been replaced by `V2_APCA_API_KEY_ID`.
 
 - Backtest:
 
@@ -5744,6 +6451,20 @@ Optional capital cap:
 
 ```bash
 python scripts/weekly_live_rebalance.py --capital-cap 30000
+```
+
+Alpaca data fetch resilience (used by weekly rebalance bar queries):
+
+- Retries transient connection/timeout errors
+- Default policy: `10` retries with `60s` delay between retries
+- Worst-case added wait before hard failure: about `10` minutes
+- Runtime banner in `output/live_rebalance.log` prints active retry settings each run
+
+Environment overrides:
+
+```bash
+export APCA_DATA_RETRY_COUNT=10
+export APCA_DATA_RETRY_DELAY_SEC=60
 ```
 
 Example crontab entry (every Monday pre-close, 3:45 PM ET — 5-min buffer before Alpaca MOC cutoff):

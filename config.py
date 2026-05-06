@@ -30,7 +30,7 @@ V2_APCA_API_KEY_ID = os.environ.get("V2_APCA_API_KEY_ID")
 V2_APCA_API_SECRET_KEY = os.environ.get("V2_APCA_API_SECRET_KEY")
 
 # PEAD strategy parameters (Post-Earnings Announcements Drift)
-PEAD_SYMBOLS = ["NXPI", "AMD", "AVGO"]
+PEAD_SYMBOLS = ["NXPI", "AMD", "AVGO", "ANET", "GOOGL"]
 PEAD_START_DATE = "2016-01-01"
 PEAD_END_DATE = "2025-12-31"
 PEAD_POSITION_SIZE = 0.10        # 10% of capital per trade

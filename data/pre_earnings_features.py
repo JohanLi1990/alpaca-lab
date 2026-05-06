@@ -111,8 +111,9 @@ def build_features(
             t_minus_1_idx = int(trading_dates.get_loc(t_minus_1_ts))  # type: ignore[arg-type]
             if t_minus_1_idx < entry_offset_days:
                 log.warning(
-                    "Event on %s: fewer than %d bars between T-%d anchor and T-1; dropping",
+                    "Event on %s: fewer than %d bars between T-%d anchor and T-1 for %s; dropping",
                     earnings_date,
+                    entry_offset_days,
                     entry_offset_days,
                     symbol,
                 )

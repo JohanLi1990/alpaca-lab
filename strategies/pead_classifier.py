@@ -70,8 +70,29 @@ def walk_forward_predict(
     -----
     - Predictions only available from position min_train onward.
     - Earlier events are in-sample training only.
+    - If feature rows are fewer than min_train, min_train is relaxed to
+      ``len(features_df) - 1`` so the latest event can still be evaluated.
     """
     features_df = features_df.sort_index().copy()
+
+    if len(features_df) < 2:
+        raise ValueError(
+            f"Need at least 2 feature rows for walk-forward prediction, got {len(features_df)}"
+        )
+
+    effective_min_train = int(min_train)
+    if effective_min_train < 1:
+        raise ValueError(f"min_train must be >= 1, got {min_train}")
+
+    if len(features_df) <= effective_min_train:
+        relaxed = len(features_df) - 1
+        log.warning(
+            "min_train (%d) >= feature_df length (%d); relaxing min_train to %d to use available events",
+            effective_min_train,
+            len(features_df),
+            relaxed,
+        )
+        effective_min_train = relaxed
 
     if model_cls is None:
         model_cls = LogisticRegression
@@ -84,17 +105,24 @@ def walk_forward_predict(
     predictions = []
 
     # Walk-forward loop
-    for test_idx in range(min_train, len(features_df)):
+    skipped_single_class = 0
+
+    for test_idx in range(effective_min_train, len(features_df)):
         train_idx = test_idx - 1  # Expanding window: 0..test_idx-1 for training
         train_size = train_idx + 1
 
         # Ensure we have at least min_train events for training
-        if train_size < min_train:
+        if train_size < effective_min_train:
             continue
 
         # Split data
         X_train, y_train = X[:train_idx + 1], y[:train_idx + 1]
         X_test = X[test_idx : test_idx + 1]
+
+        # Some early windows can be single-class; skip until both classes exist.
+        if len(np.unique(y_train)) < 2:
+            skipped_single_class += 1
+            continue
 
         # Fit scaler on training data only
         scaler = StandardScaler()
@@ -136,7 +164,9 @@ def walk_forward_predict(
 
     if not predictions:
         raise ValueError(
-            f"No predictions made; check min_train ({min_train}) vs feature_df length ({len(features_df)})"
+            "No predictions made; check class balance and training window "
+            f"(min_train={effective_min_train}, feature_df length={len(features_df)}, "
+            f"single-class windows skipped={skipped_single_class})"
         )
 
     result = pd.DataFrame(predictions)
