@@ -1,6 +1,7 @@
 import os
 import time
 import logging
+from typing import cast
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
@@ -9,6 +10,7 @@ from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import Timeout as RequestsTimeout
 
 from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.enums import DataFeed
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 
@@ -58,17 +60,21 @@ def _get_stock_bars_with_retry(client: StockHistoricalDataClient, request: Stock
     raise last_error
 
 
-def _resolve_stock_feed() -> str:
+def _resolve_stock_feed() -> DataFeed:
     """Resolve stock data feed for Alpaca bars requests.
 
-    Defaults to IEX so paper/free subscriptions can query recent data.
-    Set APCA_STOCK_FEED or APCA_DATA_FEED to override (e.g., sip, delayed_sip).
+    Defaults to SIP for full-history backtests when available.
+    Set APCA_STOCK_FEED or APCA_DATA_FEED to override (e.g., iex).
     """
-    return (
+    feed = (
         os.environ.get("APCA_STOCK_FEED")
         or os.environ.get("APCA_DATA_FEED")
-        or "iex"
+        or "sip"
     ).strip().lower()
+
+    if feed == "iex":
+        return DataFeed.IEX
+    return DataFeed.SIP
 
 
 def _get_client(profile: str = "v1") -> StockHistoricalDataClient:
@@ -81,7 +87,7 @@ def fetch_bars(
     symbols: list[str],
     start: str,
     end: str,
-    timeframe: TimeFrame = TimeFrame.Day,
+    timeframe: TimeFrame = TimeFrame.Day,  # type: ignore[assignment]
     profile: str = "v1",
 ) -> dict[str, pd.DataFrame]:
     """Fetch historical OHLCV bars for a list of symbols.
@@ -119,16 +125,40 @@ def fetch_bars(
     # YYYY-MM-DD end date remains inclusive at day granularity.
     end_dt = datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)
 
+    feed = _resolve_stock_feed()
+
     request = StockBarsRequest(
         symbol_or_symbols=symbols,
         timeframe=timeframe,
         start=start_dt,
         end=end_dt,
-        feed=_resolve_stock_feed(),
+        feed=feed,
     )
 
-    bars = _get_stock_bars_with_retry(client, request)
-    df_all = bars.df  # MultiIndex: (symbol, timestamp)
+    try:
+        bars = _get_stock_bars_with_retry(client, request)
+    except Exception as err:  # noqa: BLE001
+        err_msg = str(err).lower()
+        should_fallback_to_iex = (
+            feed == DataFeed.SIP
+            and ("invalid feed" in err_msg or "subscription" in err_msg or "forbidden" in err_msg)
+        )
+        if not should_fallback_to_iex:
+            raise
+
+        log.warning(
+            "Feed '%s' unavailable for this account; retrying bars request with feed='iex'",
+            feed.value,
+        )
+        request = StockBarsRequest(
+            symbol_or_symbols=symbols,
+            timeframe=timeframe,
+            start=start_dt,
+            end=end_dt,
+            feed=DataFeed.IEX,
+        )
+        bars = _get_stock_bars_with_retry(client, request)
+    df_all = cast(pd.DataFrame, getattr(bars, "df"))  # MultiIndex: (symbol, timestamp)
 
     result: dict[str, pd.DataFrame] = {}
     for symbol in symbols:
@@ -137,7 +167,7 @@ def fetch_bars(
                 f"Symbol '{symbol}' returned no data for the range {start} to {end}."
             )
 
-        df = df_all.loc[symbol].copy()
+        df = cast(pd.DataFrame, df_all.loc[symbol].copy())
         df.index = pd.to_datetime(df.index).tz_localize(None)  # strip tz for simplicity
 
         # Keep only OHLCV columns
@@ -151,6 +181,6 @@ def fetch_bars(
                 f"Symbol '{symbol}' returned no OHLCV data for the range {start} to {end}."
             )
 
-        result[symbol] = df
+        result[symbol] = cast(pd.DataFrame, df)
 
     return result
