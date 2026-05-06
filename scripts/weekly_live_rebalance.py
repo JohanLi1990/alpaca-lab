@@ -57,7 +57,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Run even if today is not Monday UTC.",
+        help="Run without the non-Monday UTC warning.",
     )
     return parser.parse_args()
 
@@ -76,11 +76,11 @@ def main() -> int:
     # — submits MOC orders with a 5-min buffer before the 19:50 UTC Alpaca MOC cutoff.
     now_utc = datetime.now(timezone.utc)
     if not args.force and now_utc.weekday() != 0:
-        log.info(
-            "Skip: today is %s UTC; runner executes on Mondays only.",
+        log.warning(
+            "Today is %s UTC; continuing anyway, but the intended schedule is Monday "
+            "19:45 UTC so MOC orders stay ahead of Alpaca's 19:50 UTC cutoff.",
             now_utc.strftime("%A"),
         )
-        return 0
 
     try:
         import config
